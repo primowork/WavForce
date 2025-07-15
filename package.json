@@ -2,9 +2,9 @@
   "name": "waveforce-railway",
   "version": "1.0.0",
   "description": "WaveForce - YouTube to WAV converter",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node server.js",
     "build": "echo 'Build complete'"
   },
   "dependencies": {
