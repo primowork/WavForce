@@ -4,7 +4,7 @@
   "description": "WaveForce - YouTube to WAV converter with Railway deployment",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "npx http-server -p $PORT ."
     "dev": "nodemon server.js",
     "build": "echo 'WaveForce build complete'",
     "postinstall": "echo 'Installing WaveForce dependencies...'"
