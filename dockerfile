@@ -10,8 +10,9 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp
-RUN pip3 install --break-system-packages yt-dlp
+# Install yt-dlp and ensure it's in PATH
+RUN pip3 install --break-system-packages yt-dlp && \
+    ln -s /usr/local/bin/yt-dlp /usr/bin/yt-dlp
 
 # Create app directory
 WORKDIR /app
