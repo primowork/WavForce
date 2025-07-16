@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "WaveForce - YouTube to WAV converter",
   "scripts": {
-    "start": "npx http-server -a 0.0.0.0 -p ${PORT:-8080} ."
+    "start": "npx http-server -a 0.0.0.0 -p $PORT ."
   },
   "dependencies": {
     "http-server": "^14.1.1"
