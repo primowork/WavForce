@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const app = express();
+const app = express(); // Initialize Express app
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -165,46 +165,3 @@ app.post('/api/convert', async (req, res) => {
             cleanupDirectory(tempDir);
             res.status(500).json({ error: 'Internal server error' });
             responded = true;
-        }
-    }
-});
-
-// Cleanup function
-function cleanupDirectory(dirPath) {
-    try {
-        if (fs.existsSync(dirPath)) {
-            fs.rmSync(dirPath, { recursive: true, force: true });
-            console.log(`🧹 Cleaned up directory: ${dirPath}`);
-        }
-    } catch (cleanupError) {
-        console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
-    }
-}
-
-// Error handling middleware
-app.use((error, req, res, next) => {
-    console.error('Express error:', error);
-    if (!res.headersSent) {
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌟 WaveForce server is operational on port ${PORT}`);
-    console.log(`🚀 May the Force be with your audio conversions!`);
-    
-    try {
-        execSync('yt-dlp --version', { stdio: 'pipe' });
-        console.log('✅ yt-dlp is available');
-    } catch (error) {
-        console.error('❌ yt-dlp is not available');
-    }
-    
-    try {
-        execSync('ffmpeg -version', { stdio: 'pipe' });
-        console.log('✅ ffmpeg is available');
-    } catch (error) {
-        console.error('❌ ffmpeg is not available');
-    }
-});
