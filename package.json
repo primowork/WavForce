@@ -2,12 +2,15 @@
   "name": "waveforce",
   "version": "1.0.0",
   "description": "WaveForce - YouTube to WAV converter",
-  "main": "index.html",
+  "main": "index.js",
   "scripts": {
-    "start": "npx http-server -a 0.0.0.0 -p ${PORT:-8080} ."
+    "start": "node index.js",
+    "build": "npm install --omit=dev"
   },
   "dependencies": {
-    "http-server": "^14.1.1"
+    "express": "^4.18.2",
+    "ytdl-core": "^4.11.5",
+    "fluent-ffmpeg": "^2.1.2"
   },
   "engines": {
     "node": ">=18.0.0"
