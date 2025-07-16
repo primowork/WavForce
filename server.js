@@ -1,3 +1,55 @@
+// server.js - Railway Express Server for WaveForce
+const express = require('express');
+const cors = require('cors');
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.static('.'));
+
+// Health check endpoint
+app.get('/', (req, res) => {
+    res.json({ 
+        status: 'WaveForce is operational',
+        message: 'May the Force be with your audio conversions',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Health check for services
+app.get('/health', (req, res) => {
+    try {
+        execSync('yt-dlp --version', { stdio: 'pipe' });
+        const ytdlpVersion = execSync('yt-dlp --version', { encoding: 'utf8' }).trim();
+        
+        execSync('ffmpeg -version', { stdio: 'pipe' });
+        const ffmpegVersion = execSync('ffmpeg -version', { encoding: 'utf8' }).split('\n')[0];
+        
+        res.json({
+            status: 'healthy',
+            services: {
+                ytdlp: ytdlpVersion,
+                ffmpeg: ffmpegVersion
+            },
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(503).json({
+            status: 'unhealthy',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Convert endpoint
 app.post('/api/convert', async (req, res) => {
     const { url, filename } = req.body;
     
@@ -33,8 +85,8 @@ app.post('/api/convert', async (req, res) => {
             '--extract-audio',
             '--audio-format', 'wav',
             '--audio-quality', '0',
-            '--max-filesize', '50M', // Reduced to 50MB for Railway free tier
-            '--max-duration', '300', // Reduced to 5 minutes
+            '--max-filesize', '50M',
+            '--max-duration', '300',
             '--no-playlist',
             '--output', path.join(tempDir, `${outputName}.%(ext)s`),
             url
@@ -64,7 +116,7 @@ app.post('/api/convert', async (req, res) => {
                 res.status(504).json({ error: 'Conversion timed out after 15 seconds' });
                 responded = true;
             }
-        }, 15000); // 15-second timeout
+        }, 15000);
 
         ytdlpProcess.on('close', (code) => {
             clearTimeout(timeout);
@@ -114,5 +166,45 @@ app.post('/api/convert', async (req, res) => {
             res.status(500).json({ error: 'Internal server error' });
             responded = true;
         }
+    }
+});
+
+// Cleanup function
+function cleanupDirectory(dirPath) {
+    try {
+        if (fs.existsSync(dirPath)) {
+            fs.rmSync(dirPath, { recursive: true, force: true });
+            console.log(`🧹 Cleaned up directory: ${dirPath}`);
+        }
+    } catch (cleanupError) {
+        console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
+    }
+}
+
+// Error handling middleware
+app.use((error, req, res, next) => {
+    console.error('Express error:', error);
+    if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Start server
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌟 WaveForce server is operational on port ${PORT}`);
+    console.log(`🚀 May the Force be with your audio conversions!`);
+    
+    try {
+        execSync('yt-dlp --version', { stdio: 'pipe' });
+        console.log('✅ yt-dlp is available');
+    } catch (error) {
+        console.error('❌ yt-dlp is not available');
+    }
+    
+    try {
+        execSync('ffmpeg -version', { stdio: 'pipe' });
+        console.log('✅ ffmpeg is available');
+    } catch (error) {
+        console.error('❌ ffmpeg is not available');
     }
 });
