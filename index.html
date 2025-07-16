@@ -10,14 +10,28 @@
         button { background: linear-gradient(45deg, #4b5ef9, #00d4ff); border: none; color: white; cursor: pointer; }
         #status { color: #ff4444; }
         .legal { border: 1px solid #444; padding: 10px; margin-top: 20px; }
+        .limits { background: #1a2332; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #00d4ff; }
+        .limits h3 { color: #00d4ff; margin-top: 0; }
+        .progress { margin: 10px 0; }
+        .progress-bar { width: 100%; height: 20px; background-color: #333; border-radius: 10px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(45deg, #4b5ef9, #00d4ff); transition: width 0.3s ease; }
     </style>
 </head>
 <body>
     <h1>WaveForce</h1>
     <p>Convert YouTube videos to high-quality WAV audio files</p>
+    
+    <div class="limits">
+        <h3>📊 Service Limits</h3>
+        <p><strong>⏱️ Maximum Duration:</strong> 20 minutes</p>
+        <p><strong>📦 Maximum File Size:</strong> 100MB</p>
+        <p><strong>🔄 Conversion Timeout:</strong> 3 minutes</p>
+        <p><strong>🎵 Audio Quality:</strong> Uncompressed WAV (best quality)</p>
+    </div>
+    
     <div>
         <label>🎬 YouTube URL</label>
-        <input type="text" id="youtubeUrl" placeholder="Enter YouTube URL">
+        <input type="text" id="youtubeUrl" placeholder="Enter YouTube URL (max 20 minutes)">
     </div>
     <div>
         <label>📝 Custom Filename (Optional)</label>
@@ -26,7 +40,15 @@
     <div>
         <button onclick="convertToWav()">⚡ Convert to WAV</button>
     </div>
-    <p id="status">Processing...</p>
+    
+    <div class="progress" id="progressContainer" style="display: none;">
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+        </div>
+        <p id="progressText">Starting conversion...</p>
+    </div>
+    
+    <p id="status">Ready to convert</p>
     <a id="downloadLink" style="display: none;">📥 Download WAV Transmission</a>
 
     <div class="legal">
@@ -50,16 +72,42 @@
 
     <div>
         <p>🎯 Premium Quality: Convert to uncompressed WAV format with maximum audio fidelity.</p>
-        <p>⚡ Lightning Fast: Advanced algorithms ensure quick conversion.</p>
+        <p>⚡ Lightning Fast: Advanced algorithms ensure quick conversion (up to 3 minutes).</p>
         <p>🛡️ Rebel Alliance: Join the resistance against low-quality audio formats.</p>
+        <p>📊 Enhanced Limits: Now supporting videos up to 20 minutes and 100MB files.</p>
     </div>
 
-    <p>⚠️ Railway Version: This version runs on Railway with full yt-dlp and ffmpeg support. Videos up to 20 minutes and 100MB are supported. $5 monthly credit applies. Please ensure you have permission to download the content.</p>
+    <p>⚠️ Railway Version: This version runs on Railway with full yt-dlp and ffmpeg support. Videos up to 20 minutes and 100MB are supported. Please ensure you have permission to download the content.</p>
 
     <script>
         let termsAccepted = false;
-        function acceptTerms() { termsAccepted = true; document.querySelector('.legal').style.display = 'none'; }
-        function declineTerms() { alert('You must agree to the terms to use WaveForce.'); }
+        let conversionStartTime = 0;
+        
+        function acceptTerms() { 
+            termsAccepted = true; 
+            document.querySelector('.legal').style.display = 'none'; 
+            document.getElementById('status').textContent = 'Terms accepted. Ready to convert!';
+            document.getElementById('status').style.color = '#00d4ff';
+        }
+        
+        function declineTerms() { 
+            alert('You must agree to the terms to use WaveForce.'); 
+        }
+
+        function showProgress(show = true) {
+            const progressContainer = document.getElementById('progressContainer');
+            progressContainer.style.display = show ? 'block' : 'none';
+            
+            if (!show) {
+                document.getElementById('progressFill').style.width = '0%';
+                document.getElementById('progressText').textContent = 'Starting conversion...';
+            }
+        }
+
+        function updateProgress(percentage, text) {
+            document.getElementById('progressFill').style.width = percentage + '%';
+            document.getElementById('progressText').textContent = text;
+        }
 
         async function convertToWav() {
             if (!termsAccepted) {
@@ -74,11 +122,34 @@
 
             if (!url) {
                 status.textContent = 'Error: YouTube URL is required';
+                status.style.color = '#ff4444';
                 return;
             }
 
-            status.textContent = 'Converting...';
+            // Basic URL validation
+            const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
+            if (!youtubeRegex.test(url)) {
+                status.textContent = 'Error: Please enter a valid YouTube URL';
+                status.style.color = '#ff4444';
+                return;
+            }
+
+            conversionStartTime = Date.now();
+            status.textContent = 'Starting conversion...';
+            status.style.color = '#ffaa00';
             downloadLink.style.display = 'none';
+            showProgress(true);
+
+            // Simulate progress updates
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                if (progress < 90) {
+                    progress += Math.random() * 15;
+                    progress = Math.min(progress, 90);
+                    const timeElapsed = Math.round((Date.now() - conversionStartTime) / 1000);
+                    updateProgress(progress, `Converting... ${Math.round(progress)}% (${timeElapsed}s elapsed)`);
+                }
+            }, 1000);
 
             try {
                 const response = await fetch('/api/convert', {
@@ -87,21 +158,68 @@
                     body: JSON.stringify({ url, filename })
                 });
 
+                clearInterval(progressInterval);
+
                 if (!response.ok) {
                     const error = await response.json();
                     throw new Error(error.error || 'Conversion failed');
                 }
 
+                updateProgress(100, 'Conversion complete! Preparing download...');
+                
                 const blob = await response.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
+                const finalFilename = filename ? `${filename}.wav` : 'waveforce_output.wav';
+                
                 downloadLink.href = downloadUrl;
-                downloadLink.download = filename || 'output.wav';
+                downloadLink.download = finalFilename;
                 downloadLink.style.display = 'block';
-                status.textContent = 'Conversion complete! Click to download.';
+                
+                const totalTime = Math.round((Date.now() - conversionStartTime) / 1000);
+                const fileSize = Math.round(blob.size / 1024 / 1024 * 100) / 100;
+                
+                status.textContent = `✅ Conversion successful! (${totalTime}s, ${fileSize}MB)`;
+                status.style.color = '#00ff88';
+                
+                showProgress(false);
+                
+                // Auto-trigger download
+                downloadLink.click();
+                
             } catch (err) {
-                status.textContent = `Error: ${err.message}`;
+                clearInterval(progressInterval);
+                showProgress(false);
+                
+                // Enhanced error messages
+                let errorMessage = err.message;
+                if (errorMessage.includes('Video too long')) {
+                    errorMessage = '⏱️ Video exceeds 20-minute limit. Please try a shorter video.';
+                } else if (errorMessage.includes('too large')) {
+                    errorMessage = '📦 File exceeds 100MB limit. Please try a different video.';
+                } else if (errorMessage.includes('unavailable')) {
+                    errorMessage = '🚫 Video is unavailable, private, or restricted.';
+                } else if (errorMessage.includes('timeout')) {
+                    errorMessage = '⏰ Conversion timed out. Please try again or use a shorter video.';
+                } else if (errorMessage.includes('authentication')) {
+                    errorMessage = '🔒 Video requires sign-in or age verification.';
+                }
+                
+                status.textContent = `Error: ${errorMessage}`;
+                status.style.color = '#ff4444';
             }
         }
+
+        // Add keyboard shortcut
+        document.getElementById('youtubeUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                convertToWav();
+            }
+        });
+
+        // Auto-focus URL input
+        window.onload = function() {
+            document.getElementById('youtubeUrl').focus();
+        };
     </script>
 </body>
 </html>
