@@ -7,7 +7,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const app = express(); // Initialize Express app
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8080; // Use 8080 as fallback, matching observed behavior
 
 // Middleware
 app.use(cors());
@@ -108,60 +108,4 @@ app.post('/api/convert', async (req, res) => {
             console.log(`stderr: ${data}`);
         });
 
-        const timeout = setTimeout(() => {
-            if (!responded) {
-                ytdlpProcess.kill('SIGTERM');
-                console.log('⏰ Timed out after 15 seconds');
-                cleanupDirectory(tempDir);
-                res.status(504).json({ error: 'Conversion timed out after 15 seconds' });
-                responded = true;
-            }
-        }, 15000);
-
-        ytdlpProcess.on('close', (code) => {
-            clearTimeout(timeout);
-            if (!responded) {
-                if (code !== 0) {
-                    console.error(`❌ Exited with code ${code}, stderr: ${stderr}`);
-                    cleanupDirectory(tempDir);
-                    if (stderr.includes('Video unavailable')) {
-                        res.status(400).json({ error: 'Video is unavailable or private' });
-                    } else if (stderr.includes('max-filesize')) {
-                        res.status(400).json({ error: 'Video file too large (max 50MB)' });
-                    } else if (stderr.includes('max-duration')) {
-                        res.status(400).json({ error: 'Video too long (max 5 minutes)' });
-                    } else {
-                        res.status(500).json({ error: 'Conversion failed' });
-                    }
-                } else {
-                    const stats = fs.statSync(outputPath);
-                    if (stats.size > 50 * 1024 * 1024) {
-                        cleanupDirectory(tempDir);
-                        res.status(400).json({ error: 'File exceeds 50MB limit' });
-                    } else {
-                        res.setHeader('Content-Type', 'audio/wav');
-                        res.setHeader('Content-Disposition', `attachment; filename="${outputName}.wav"`);
-                        fs.createReadStream(outputPath).pipe(res);
-                        res.on('finish', () => cleanupDirectory(tempDir));
-                    }
-                }
-                responded = true;
-            }
-        });
-
-        ytdlpProcess.on('error', (error) => {
-            clearTimeout(timeout);
-            if (!responded) {
-                console.error(`❌ Process error: ${error.message}`);
-                cleanupDirectory(tempDir);
-                res.status(500).json({ error: 'Conversion process failed to start' });
-                responded = true;
-            }
-        });
-
-    } catch (error) {
-        if (!responded) {
-            console.error(`❌ Catch error: ${error.message}`);
-            cleanupDirectory(tempDir);
-            res.status(500).json({ error: 'Internal server error' });
-            responded = true;
+        const timeout = set
