@@ -1,4 +1,4 @@
-// server.js - Railway Express Server for WaveForce
+// server.js - עם מגבלות אורך מותאמות
 const express = require('express');
 const cors = require('cors');
 const { spawn, execSync } = require('child_process');
@@ -6,8 +6,16 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const app = express(); // Initialize Express app
-const PORT = process.env.PORT || 8080; // Use 8080 as fallback, matching observed behavior
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+// הגדרות מותאמות אישית
+const CONFIG = {
+    MAX_DURATION: 1200, // 20 דקות במקום 5
+    MAX_FILESIZE: '100M', // 100MB במקום 50MB
+    TIMEOUT: 180000, // 3 דקות timeout במקום 15 שניות
+    TEMP_CLEANUP_DELAY: 60000 // דקה לפני מחיקת קבצים זמניים
+};
 
 // Middleware
 app.use(cors());
@@ -19,6 +27,11 @@ app.get('/', (req, res) => {
     res.json({ 
         status: 'WaveForce is operational',
         message: 'May the Force be with your audio conversions',
+        limits: {
+            maxDuration: `${CONFIG.MAX_DURATION} seconds (${CONFIG.MAX_DURATION/60} minutes)`,
+            maxFilesize: CONFIG.MAX_FILESIZE,
+            timeout: `${CONFIG.TIMEOUT/1000} seconds`
+        },
         timestamp: new Date().toISOString()
     });
 });
@@ -38,6 +51,7 @@ app.get('/health', (req, res) => {
                 ytdlp: ytdlpVersion,
                 ffmpeg: ffmpegVersion
             },
+            config: CONFIG,
             timestamp: new Date().toISOString()
         });
     } catch (error) {
@@ -80,84 +94,156 @@ app.post('/api/convert', async (req, res) => {
         console.log(`🚀 Starting conversion for URL: ${url}`);
         console.log(`📁 Temp dir: ${tempDir}`);
         console.log(`📄 Output file: ${outputPath}`);
+        console.log(`⏱️ Max duration: ${CONFIG.MAX_DURATION} seconds`);
+        console.log(`📦 Max filesize: ${CONFIG.MAX_FILESIZE}`);
 
-        const ytdlpProcess = spawn('yt-dlp', [
-            '--extract-audio',
-            '--audio-format', 'wav',
-            '--audio-quality', '0',
-            '--max-filesize', '50M',
-            '--max-duration', '300',
-            '--no-playlist',
-            '--output', path.join(tempDir, `${outputName}.%(ext)s`),
+        // בדיקה מוקדמת של אורך הווידאו
+        console.log('🔍 Checking video info...');
+        const infoProcess = spawn('yt-dlp', [
+            '--print', 'duration',
+            '--no-warnings',
             url
         ], {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
         });
 
-        let stdout = '';
-        let stderr = '';
-
-        ytdlpProcess.stdout.on('data', (data) => {
-            stdout += data.toString();
-            console.log(`stdout: ${data}`);
+        let infoDuration = '';
+        infoProcess.stdout.on('data', (data) => {
+            infoDuration += data.toString().trim();
         });
 
-        ytdlpProcess.stderr.on('data', (data) => {
-            stderr += data.toString();
-            console.log(`stderr: ${data}`);
-        });
-
-        const timeout = setTimeout(() => {
-            if (!responded) {
-                ytdlpProcess.kill('SIGTERM');
-                console.log('⏰ Timed out after 15 seconds');
-                cleanupDirectory(tempDir);
-                res.status(504).json({ error: 'Conversion timed out after 15 seconds' });
-                responded = true;
-            }
-        }, 15000);
-
-        ytdlpProcess.on('close', (code) => {
-            clearTimeout(timeout);
-            if (!responded) {
-                if (code !== 0) {
-                    console.error(`❌ Exited with code ${code}, stderr: ${stderr}`);
+        infoProcess.on('close', (code) => {
+            if (code === 0 && infoDuration) {
+                const duration = parseInt(infoDuration);
+                if (duration > CONFIG.MAX_DURATION) {
+                    console.log(`❌ Video too long: ${duration}s (max: ${CONFIG.MAX_DURATION}s)`);
                     cleanupDirectory(tempDir);
-                    if (stderr.includes('Video unavailable')) {
-                        res.status(400).json({ error: 'Video is unavailable or private' });
-                    } else if (stderr.includes('max-filesize')) {
-                        res.status(400).json({ error: 'Video file too large (max 50MB)' });
-                    } else if (stderr.includes('max-duration')) {
-                        res.status(400).json({ error: 'Video too long (max 5 minutes)' });
-                    } else {
-                        res.status(500).json({ error: 'Conversion failed' });
+                    if (!responded) {
+                        res.status(400).json({ 
+                            error: `Video too long (${Math.round(duration/60)} minutes). Maximum allowed: ${CONFIG.MAX_DURATION/60} minutes` 
+                        });
+                        responded = true;
                     }
-                } else {
-                    const stats = fs.statSync(outputPath);
-                    if (stats.size > 50 * 1024 * 1024) {
-                        cleanupDirectory(tempDir);
-                        res.status(400).json({ error: 'File exceeds 50MB limit' });
-                    } else {
-                        res.setHeader('Content-Type', 'audio/wav');
-                        res.setHeader('Content-Disposition', `attachment; filename="${outputName}.wav"`);
-                        fs.createReadStream(outputPath).pipe(res);
-                        res.on('finish', () => cleanupDirectory(tempDir));
-                    }
+                    return;
                 }
-                responded = true;
+                console.log(`✅ Video duration OK: ${duration}s`);
             }
+            
+            // המשך עם ההמרה
+            startConversion();
         });
 
-        ytdlpProcess.on('error', (error) => {
-            clearTimeout(timeout);
-            if (!responded) {
-                console.error(`❌ Process error: ${error.message}`);
-                cleanupDirectory(tempDir);
-                res.status(500).json({ error: 'Conversion process failed to start' });
-                responded = true;
-            }
-        });
+        function startConversion() {
+            if (responded) return;
+
+            const ytdlpProcess = spawn('yt-dlp', [
+                '--extract-audio',
+                '--audio-format', 'wav',
+                '--audio-quality', '0',
+                '--max-filesize', CONFIG.MAX_FILESIZE,
+                '--max-duration', CONFIG.MAX_DURATION.toString(),
+                '--no-playlist',
+                '--output', path.join(tempDir, `${outputName}.%(ext)s`),
+                '--verbose', // הוסף verbose לדיבוג
+                url
+            ], {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            ytdlpProcess.stdout.on('data', (data) => {
+                stdout += data.toString();
+                console.log(`stdout: ${data}`);
+            });
+
+            ytdlpProcess.stderr.on('data', (data) => {
+                stderr += data.toString();
+                console.log(`stderr: ${data}`);
+            });
+
+            const timeout = setTimeout(() => {
+                if (!responded) {
+                    ytdlpProcess.kill('SIGTERM');
+                    console.log(`⏰ Timed out after ${CONFIG.TIMEOUT/1000} seconds`);
+                    cleanupDirectory(tempDir);
+                    res.status(504).json({ 
+                        error: `Conversion timed out after ${CONFIG.TIMEOUT/1000} seconds` 
+                    });
+                    responded = true;
+                }
+            }, CONFIG.TIMEOUT);
+
+            ytdlpProcess.on('close', (code) => {
+                clearTimeout(timeout);
+                if (!responded) {
+                    if (code !== 0) {
+                        console.error(`❌ Exited with code ${code}, stderr: ${stderr}`);
+                        cleanupDirectory(tempDir);
+                        
+                        // טיפול משופר בשגיאות
+                        if (stderr.includes('Video unavailable') || stderr.includes('Private video')) {
+                            res.status(400).json({ error: 'Video is unavailable or private' });
+                        } else if (stderr.includes('max-filesize') || stderr.includes('too large')) {
+                            res.status(400).json({ error: `Video file too large (max ${CONFIG.MAX_FILESIZE})` });
+                        } else if (stderr.includes('max-duration') || stderr.includes('too long')) {
+                            res.status(400).json({ error: `Video too long (max ${CONFIG.MAX_DURATION/60} minutes)` });
+                        } else if (stderr.includes('Sign in to confirm')) {
+                            res.status(403).json({ error: 'Video requires authentication or age verification' });
+                        } else if (stderr.includes('No video formats found')) {
+                            res.status(400).json({ error: 'No audio/video formats available for this URL' });
+                        } else {
+                            res.status(500).json({ 
+                                error: 'Conversion failed',
+                                details: stderr.split('\n').slice(-5).join('\n') // חמש השורות האחרונות
+                            });
+                        }
+                    } else {
+                        // בדיקת קיום הקובץ
+                        if (!fs.existsSync(outputPath)) {
+                            console.error('❌ Output file not found');
+                            cleanupDirectory(tempDir);
+                            res.status(500).json({ error: 'Output file was not created' });
+                        } else {
+                            const stats = fs.statSync(outputPath);
+                            console.log(`📊 Output file size: ${Math.round(stats.size / 1024 / 1024)}MB`);
+                            
+                            if (stats.size > 100 * 1024 * 1024) { // 100MB
+                                cleanupDirectory(tempDir);
+                                res.status(400).json({ error: 'File exceeds 100MB limit' });
+                            } else {
+                                console.log('✅ Conversion successful, sending file...');
+                                res.setHeader('Content-Type', 'audio/wav');
+                                res.setHeader('Content-Disposition', `attachment; filename="${outputName}.wav"`);
+                                res.setHeader('Content-Length', stats.size);
+                                
+                                const readStream = fs.createReadStream(outputPath);
+                                readStream.pipe(res);
+                                
+                                // מחיקה מושהית של קבצים זמניים
+                                setTimeout(() => {
+                                    cleanupDirectory(tempDir);
+                                }, CONFIG.TEMP_CLEANUP_DELAY);
+                            }
+                        }
+                    }
+                    responded = true;
+                }
+            });
+
+            ytdlpProcess.on('error', (error) => {
+                clearTimeout(timeout);
+                if (!responded) {
+                    console.error(`❌ Process error: ${error.message}`);
+                    cleanupDirectory(tempDir);
+                    res.status(500).json({ error: 'Conversion process failed to start' });
+                    responded = true;
+                }
+            });
+        }
 
     } catch (error) {
         if (!responded) {
@@ -193,6 +279,10 @@ app.use((error, req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌟 WaveForce server is operational on port ${PORT}`);
     console.log(`🚀 May the Force be with your audio conversions!`);
+    console.log(`📊 Configuration:`);
+    console.log(`   - Max duration: ${CONFIG.MAX_DURATION} seconds (${CONFIG.MAX_DURATION/60} minutes)`);
+    console.log(`   - Max filesize: ${CONFIG.MAX_FILESIZE}`);
+    console.log(`   - Timeout: ${CONFIG.TIMEOUT/1000} seconds`);
     
     try {
         execSync('yt-dlp --version', { stdio: 'pipe' });
