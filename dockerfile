@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yt-dlp
-RUN pip3 install yt-dlp
+RUN pip3 install --break-system-packages yt-dlp
 
 # Create app directory
 WORKDIR /app
@@ -28,12 +28,12 @@ COPY . .
 # Create temp directory for conversions
 RUN mkdir -p /tmp && chmod 755 /tmp
 
-# Expose port
-EXPOSE 3000
+# Expose port (use Railway's PORT)
+EXPOSE $PORT
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD curl -f http://localhost:$PORT/health || exit 1
 
 # Start the application
 CMD ["npm", "start"]
