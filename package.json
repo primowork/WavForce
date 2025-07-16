@@ -2,9 +2,8 @@
   "name": "waveforce",
   "version": "1.0.0",
   "description": "WaveForce - YouTube to WAV converter",
-  "main": "index.html",
   "scripts": {
-    "start": "npx http-server -p $PORT ."
+    "start": "npx http-server -a 0.0.0.0 -p ${PORT:-8080} ."
   },
   "dependencies": {
     "http-server": "^14.1.1"
