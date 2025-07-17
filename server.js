@@ -1,4 +1,4 @@
-// server.js - עם מגבלות אורך מותאמות
+// server.js - עם תיקונים לבעיית התקעות
 const express = require('express');
 const cors = require('cors');
 const { spawn, execSync } = require('child_process');
@@ -9,12 +9,13 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// הגדרות מותאמות אישית
+// הגדרות מותאמות עם timeout מוגדל
 const CONFIG = {
-    MAX_DURATION: 1200, // 20 דקות במקום 5
-    MAX_FILESIZE: '100M', // 100MB במקום 50MB
-    TIMEOUT: 180000, // 3 דקות timeout במקום 15 שניות
-    TEMP_CLEANUP_DELAY: 60000 // דקה לפני מחיקת קבצים זמניים
+    MAX_DURATION: 1200, // 20 דקות
+    MAX_FILESIZE: '100M', // 100MB
+    TIMEOUT: 300000, // 5 דקות timeout (הוגדל מ-3 דקות)
+    TEMP_CLEANUP_DELAY: 60000,
+    PROGRESS_TIMEOUT: 30000 // timeout אם אין התקדמות
 };
 
 // Middleware
@@ -36,7 +37,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// Health check for services
 app.get('/health', (req, res) => {
     try {
         execSync('yt-dlp --version', { stdio: 'pipe' });
@@ -63,7 +63,7 @@ app.get('/health', (req, res) => {
     }
 });
 
-// Convert endpoint
+// Convert endpoint - עם תיקונים לבעיית התקעות
 app.post('/api/convert', async (req, res) => {
     const { url, filename } = req.body;
     
@@ -85,6 +85,7 @@ app.post('/api/convert', async (req, res) => {
     const outputPath = path.join(tempDir, `${outputName}.wav`);
 
     let responded = false;
+    let lastProgressTime = Date.now();
 
     try {
         if (!fs.existsSync(tempDir)) {
@@ -94,116 +95,139 @@ app.post('/api/convert', async (req, res) => {
         console.log(`🚀 Starting conversion for URL: ${url}`);
         console.log(`📁 Temp dir: ${tempDir}`);
         console.log(`📄 Output file: ${outputPath}`);
-        console.log(`⏱️ Max duration: ${CONFIG.MAX_DURATION} seconds`);
-        console.log(`📦 Max filesize: ${CONFIG.MAX_FILESIZE}`);
 
-        // בדיקה מוקדמת של אורך הווידאו
-        console.log('🔍 Checking video info...');
-     const ytdlpProcess = spawn('yt-dlp', [
-    '--extract-audio',
-    '--audio-format', 'wav',
-    '--audio-quality', '0',
-    '--max-filesize', CONFIG.MAX_FILESIZE,
-    '--no-playlist', // Keeps only the main video
-    '--output', path.join(tempDir, `${outputName}.%(ext)s`),
-    '--quiet', // Reduces output to speed up
-    url.split('?')[0] // Use only the base URL (e.g., https://youtu.be/-zLV4BsRZVk)
-], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
-});
-                        responded = true;
-                    }
-                    return;
-                }
-                console.log(`✅ Video duration OK: ${duration}s`);
-            } else {
-                console.error(`❌ Failed to get duration, code: ${code}`);
-                if (!responded) {
-                    cleanupDirectory(tempDir);
-                    res.status(500).json({ error: 'Failed to retrieve video duration' });
-                    responded = true;
-                }
-                return;
-            }
-            
-            // המשך עם ההמרה
-            startConversion();
+        const ytdlpProcess = spawn('yt-dlp', [
+            '--extract-audio',
+            '--audio-format', 'wav',
+            '--audio-quality', '0',
+            '--max-filesize', CONFIG.MAX_FILESIZE,
+            '--max-duration', CONFIG.MAX_DURATION.toString(),
+            '--no-playlist',
+            '--no-warnings',
+            '--progress',  // הוסף progress reporting
+            '--newline',   // הוסף newline אחרי כל progress update
+            '--output', path.join(tempDir, `${outputName}.%(ext)s`),
+            url
+        ], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
         });
 
-        function startConversion() {
-            if (responded) return;
+        let stdout = '';
+        let stderr = '';
+        let downloadProgress = 0;
 
-            const ytdlpProcess = spawn('yt-dlp', [
-                '--extract-audio',
-                '--audio-format', 'wav',
-                '--audio-quality', '0',
-                '--max-filesize', CONFIG.MAX_FILESIZE,
-                '--no-playlist',
-                '--output', path.join(tempDir, `${outputName}.%(ext)s`),
-                '--verbose',
-                url
-            ], {
-                stdio: ['pipe', 'pipe', 'pipe'],
-                env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
-            });
+        ytdlpProcess.stdout.on('data', (data) => {
+            const output = data.toString();
+            stdout += output;
+            
+            // מעקב אחר התקדמות ההורדה
+            const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
+            if (progressMatch) {
+                downloadProgress = parseFloat(progressMatch[1]);
+                lastProgressTime = Date.now();
+                console.log(`📊 Download progress: ${downloadProgress}%`);
+            }
+            
+            // מעקב אחר התקדמות ההמרה
+            if (output.includes('[ffmpeg]')) {
+                console.log(`🔄 FFmpeg processing: ${output.trim()}`);
+                lastProgressTime = Date.now();
+            }
+            
+            console.log(`stdout: ${output}`);
+        });
 
-            let stdout = '';
-            let stderr = '';
+        ytdlpProcess.stderr.on('data', (data) => {
+            const output = data.toString();
+            stderr += output;
+            console.log(`stderr: ${output}`);
+            
+            // עדכן זמן אם יש פעילות
+            if (output.trim().length > 0) {
+                lastProgressTime = Date.now();
+            }
+        });
 
-            ytdlpProcess.stdout.on('data', (data) => {
-                stdout += data.toString();
-                console.log(`stdout: ${data}`);
-            });
+        // Timeout עיקרי
+        const mainTimeout = setTimeout(() => {
+            if (!responded) {
+                ytdlpProcess.kill('SIGTERM');
+                console.log(`⏰ Main timeout after ${CONFIG.TIMEOUT/1000} seconds`);
+                cleanupDirectory(tempDir);
+                res.status(504).json({ 
+                    error: `Conversion timed out after ${CONFIG.TIMEOUT/1000} seconds. Try a shorter video or check if the URL is accessible.` 
+                });
+                responded = true;
+            }
+        }, CONFIG.TIMEOUT);
 
-            ytdlpProcess.stderr.on('data', (data) => {
-                stderr += data.toString();
-                console.log(`stderr: ${data}`);
-            });
+        // Timeout להתקדמות - אם אין התקדמות ל-30 שניות
+        const progressCheck = setInterval(() => {
+            const timeSinceProgress = Date.now() - lastProgressTime;
+            if (timeSinceProgress > CONFIG.PROGRESS_TIMEOUT && !responded) {
+                ytdlpProcess.kill('SIGTERM');
+                console.log(`⏰ Progress timeout - no activity for ${CONFIG.PROGRESS_TIMEOUT/1000} seconds`);
+                clearTimeout(mainTimeout);
+                clearInterval(progressCheck);
+                cleanupDirectory(tempDir);
+                res.status(504).json({ 
+                    error: `Process stuck - no progress for ${CONFIG.PROGRESS_TIMEOUT/1000} seconds. Please try again.` 
+                });
+                responded = true;
+            }
+        }, 5000); // בדוק כל 5 שניות
 
-            const timeout = setTimeout(() => {
-                if (!responded) {
-                    ytdlpProcess.kill('SIGTERM');
-                    console.log(`⏰ Timed out after ${CONFIG.TIMEOUT/1000} seconds`);
+        ytdlpProcess.on('close', (code) => {
+            clearTimeout(mainTimeout);
+            clearInterval(progressCheck);
+            
+            if (!responded) {
+                console.log(`🏁 Process finished with code: ${code}`);
+                console.log(`📊 Final download progress: ${downloadProgress}%`);
+                
+                if (code !== 0) {
+                    console.error(`❌ Exited with code ${code}`);
+                    console.error(`📝 Stderr: ${stderr}`);
                     cleanupDirectory(tempDir);
-                    res.status(504).json({ 
-                        error: `Conversion timed out after ${CONFIG.TIMEOUT/1000} seconds` 
-                    });
-                    responded = true;
-                }
-            }, CONFIG.TIMEOUT);
-
-            ytdlpProcess.on('close', (code) => {
-                clearTimeout(timeout);
-                if (!responded) {
-                    if (code !== 0) {
-                        console.error(`❌ Exited with code ${code}, stderr: ${stderr}`);
-                        cleanupDirectory(tempDir);
+                    
+                    // טיפול משופר בשגיאות
+                    let errorMessage = 'Conversion failed';
+                    
+                    if (stderr.includes('Video unavailable') || stderr.includes('Private video')) {
+                        errorMessage = 'Video is unavailable, private, or restricted';
+                    } else if (stderr.includes('max-filesize') || stderr.includes('too large')) {
+                        errorMessage = `Video file too large (max ${CONFIG.MAX_FILESIZE})`;
+                    } else if (stderr.includes('max-duration') || stderr.includes('too long')) {
+                        errorMessage = `Video too long (max ${CONFIG.MAX_DURATION/60} minutes)`;
+                    } else if (stderr.includes('Sign in to confirm') || stderr.includes('age')) {
+                        errorMessage = 'Video requires authentication or age verification';
+                    } else if (stderr.includes('No video formats') || stderr.includes('format not available')) {
+                        errorMessage = 'No suitable audio/video format available';
+                    } else if (stderr.includes('network') || stderr.includes('timeout') || stderr.includes('connection')) {
+                        errorMessage = 'Network error - please check the URL and try again';
+                    } else if (downloadProgress > 0 && downloadProgress < 100) {
+                        errorMessage = `Download incomplete (${downloadProgress}% completed). Please try again.`;
+                    }
+                    
+                    res.status(400).json({ error: errorMessage });
+                } else {
+                    // בדיקת קיום הקובץ עם retry
+                    let attempts = 0;
+                    const maxAttempts = 5;
+                    
+                    const checkFile = () => {
+                        attempts++;
                         
-                        if (stderr.includes('Video unavailable') || stderr.includes('Private video')) {
-                            res.status(400).json({ error: 'Video is unavailable or private' });
-                        } else if (stderr.includes('max-filesize') || stderr.includes('too large')) {
-                            res.status(400).json({ error: `Video file too large (max ${CONFIG.MAX_FILESIZE})` });
-                        } else if (stderr.includes('Sign in to confirm')) {
-                            res.status(403).json({ error: 'Video requires authentication or age verification' });
-                        } else if (stderr.includes('No video formats found')) {
-                            res.status(400).json({ error: 'No audio/video formats available for this URL' });
-                        } else {
-                            res.status(500).json({ 
-                                error: 'Conversion failed',
-                                details: stderr.split('\n').slice(-5).join('\n') // חמש השורות האחרונות
-                            });
-                        }
-                    } else {
-                        if (!fs.existsSync(outputPath)) {
-                            console.error('❌ Output file not found');
-                            cleanupDirectory(tempDir);
-                            res.status(500).json({ error: 'Output file was not created' });
-                        } else {
+                        if (fs.existsSync(outputPath)) {
                             const stats = fs.statSync(outputPath);
-                            console.log(`📊 Output file size: ${Math.round(stats.size / 1024 / 1024)}MB`);
+                            console.log(`✅ Output file found: ${Math.round(stats.size / 1024 / 1024 * 100) / 100}MB`);
                             
-                            if (stats.size > 100 * 1024 * 1024) { // 100MB
+                            if (stats.size === 0) {
+                                console.error('❌ Output file is empty');
+                                cleanupDirectory(tempDir);
+                                res.status(500).json({ error: 'Generated file is empty. Please try again.' });
+                            } else if (stats.size > 100 * 1024 * 1024) {
                                 cleanupDirectory(tempDir);
                                 res.status(400).json({ error: 'File exceeds 100MB limit' });
                             } else {
@@ -219,55 +243,44 @@ app.post('/api/convert', async (req, res) => {
                                     cleanupDirectory(tempDir);
                                 }, CONFIG.TEMP_CLEANUP_DELAY);
                             }
+                        } else if (attempts < maxAttempts) {
+                            console.log(`⏳ File not ready yet, waiting... (attempt ${attempts}/${maxAttempts})`);
+                            setTimeout(checkFile, 2000); // חכה 2 שניות ונסה שוב
+                        } else {
+                            console.error('❌ Output file not found after multiple attempts');
+                            cleanupDirectory(tempDir);
+                            res.status(500).json({ error: 'Output file was not created. Please try again.' });
                         }
-                    }
-                    responded = true;
+                    };
+                    
+                    checkFile();
                 }
-            });
+                responded = true;
+            }
+        });
 
-            ytdlpProcess.on('error', (error) => {
-                clearTimeout(timeout);
-                if (!responded) {
-                    console.error(`❌ Process error: ${error.message}`);
-                    cleanupDirectory(tempDir);
-                    res.status(500).json({ error: 'Conversion process failed to start' });
-                    responded = true;
-                }
-            });
-        }
+        ytdlpProcess.on('error', (error) => {
+            clearTimeout(mainTimeout);
+            clearInterval(progressCheck);
+            
+            if (!responded) {
+                console.error(`❌ Process error: ${error.message}`);
+                cleanupDirectory(tempDir);
+                res.status(500).json({ error: 'Conversion process failed to start. Please try again.' });
+                responded = true;
+            }
+        });
 
     } catch (error) {
         if (!responded) {
             console.error(`❌ Catch error: ${error.message}`);
             cleanupDirectory(tempDir);
-            res.status(500).json({ error: 'Internal server error' });
+            res.status(500).json({ error: 'Internal server error. Please try again.' });
             responded = true;
         }
     }
 });
 
-            ytdlpProcess.on('error', (error) => {
-                clearTimeout(timeout);
-                if (!responded) {
-                    console.error(`❌ Process error: ${error.message}`);
-                    cleanupDirectory(tempDir);
-                    res.status(500).json({ error: 'Conversion process failed to start' });
-                    responded = true;
-                }
-            });
-        }
-
-    } catch (error) {
-        if (!responded) {
-            console.error(`❌ Catch error: ${error.message}`);
-            cleanupDirectory(tempDir);
-            res.status(500).json({ error: 'Internal server error' });
-            responded = true;
-        }
-    }
-});
-
-// Cleanup function
 function cleanupDirectory(dirPath) {
     try {
         if (fs.existsSync(dirPath)) {
@@ -279,7 +292,6 @@ function cleanupDirectory(dirPath) {
     }
 }
 
-// Error handling middleware
 app.use((error, req, res, next) => {
     console.error('Express error:', error);
     if (!res.headersSent) {
@@ -287,14 +299,13 @@ app.use((error, req, res, next) => {
     }
 });
 
-// Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌟 WaveForce server is operational on port ${PORT}`);
-    console.log(`🚀 May the Force be with your audio conversions!`);
-    console.log(`📊 Configuration:`);
+    console.log(`🚀 Configuration:`);
     console.log(`   - Max duration: ${CONFIG.MAX_DURATION} seconds (${CONFIG.MAX_DURATION/60} minutes)`);
     console.log(`   - Max filesize: ${CONFIG.MAX_FILESIZE}`);
-    console.log(`   - Timeout: ${CONFIG.TIMEOUT/1000} seconds`);
+    console.log(`   - Main timeout: ${CONFIG.TIMEOUT/1000} seconds`);
+    console.log(`   - Progress timeout: ${CONFIG.PROGRESS_TIMEOUT/1000} seconds`);
     
     try {
         execSync('yt-dlp --version', { stdio: 'pipe' });
