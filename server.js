@@ -1,4 +1,4 @@
-// server.js - עם תיקונים לבעיית התקעות
+// server.js - עם תיקון לגרסת yt-dlp חדשה
 const express = require('express');
 const cors = require('cors');
 const { spawn, execSync } = require('child_process');
@@ -9,13 +9,13 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// הגדרות מותאמות עם timeout מוגדל
+// הגדרות מותאמות
 const CONFIG = {
-    MAX_DURATION: 1200, // 20 דקות
-    MAX_FILESIZE: '100M', // 100MB
-    TIMEOUT: 300000, // 5 דקות timeout (הוגדל מ-3 דקות)
+    MAX_DURATION: 1200, // 20 דקות בשניות
+    MAX_FILESIZE: '100M',
+    TIMEOUT: 300000, // 5 דקות timeout
     TEMP_CLEANUP_DELAY: 60000,
-    PROGRESS_TIMEOUT: 30000 // timeout אם אין התקדמות
+    PROGRESS_TIMEOUT: 45000 // 45 שניות ללא התקדמות
 };
 
 // Middleware
@@ -63,7 +63,47 @@ app.get('/health', (req, res) => {
     }
 });
 
-// Convert endpoint - עם תיקונים לבעיית התקעות
+// פונקציה לבדיקת אורך ווידאו
+async function checkVideoDuration(url) {
+    return new Promise((resolve, reject) => {
+        const checkProcess = spawn('yt-dlp', [
+            '--print', 'duration',
+            '--no-warnings',
+            '--no-playlist',
+            url
+        ], {
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        let output = '';
+        let errorOutput = '';
+
+        checkProcess.stdout.on('data', (data) => {
+            output += data.toString();
+        });
+
+        checkProcess.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+        });
+
+        checkProcess.on('close', (code) => {
+            if (code === 0 && output.trim()) {
+                const duration = parseInt(output.trim());
+                resolve(isNaN(duration) ? null : duration);
+            } else {
+                console.log(`Duration check failed: ${errorOutput}`);
+                resolve(null); // אם לא מצליח לבדוק, המשך בלי בדיקה
+            }
+        });
+
+        setTimeout(() => {
+            checkProcess.kill();
+            resolve(null);
+        }, 15000); // timeout של 15 שניות לבדיקה
+    });
+}
+
+// Convert endpoint
 app.post('/api/convert', async (req, res) => {
     const { url, filename } = req.body;
     
@@ -96,19 +136,42 @@ app.post('/api/convert', async (req, res) => {
         console.log(`📁 Temp dir: ${tempDir}`);
         console.log(`📄 Output file: ${outputPath}`);
 
-        const ytdlpProcess = spawn('yt-dlp', [
+        // בדיקת אורך הווידאו (אופציונלית)
+        console.log('🔍 Checking video duration...');
+        const duration = await checkVideoDuration(url);
+        if (duration && duration > CONFIG.MAX_DURATION) {
+            console.log(`❌ Video too long: ${duration}s (max: ${CONFIG.MAX_DURATION}s)`);
+            cleanupDirectory(tempDir);
+            return res.status(400).json({ 
+                error: `Video too long (${Math.round(duration/60)} minutes). Maximum allowed: ${CONFIG.MAX_DURATION/60} minutes` 
+            });
+        }
+        if (duration) {
+            console.log(`✅ Video duration OK: ${duration}s (${Math.round(duration/60)} minutes)`);
+        } else {
+            console.log(`⚠️ Could not check duration, proceeding with conversion`);
+        }
+
+        // הרצת yt-dlp ללא --max-duration
+        const ytdlpArgs = [
             '--extract-audio',
             '--audio-format', 'wav',
             '--audio-quality', '0',
             '--max-filesize', CONFIG.MAX_FILESIZE,
-            '--max-duration', CONFIG.MAX_DURATION.toString(),
             '--no-playlist',
             '--no-warnings',
-            '--progress',  // הוסף progress reporting
-            '--newline',   // הוסף newline אחרי כל progress update
-            '--output', path.join(tempDir, `${outputName}.%(ext)s`),
-            url
-        ], {
+            '--progress',
+            '--newline',
+            '--output', path.join(tempDir, `${outputName}.%(ext)s`)
+        ];
+
+        // הוסף --playlist-end 1 כדי לוודא שזה לא playlist
+        ytdlpArgs.push('--playlist-end', '1');
+        ytdlpArgs.push(url);
+
+        console.log(`🎬 Starting yt-dlp with args: ${ytdlpArgs.join(' ')}`);
+
+        const ytdlpProcess = spawn('yt-dlp', ytdlpArgs, {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
         });
@@ -121,7 +184,7 @@ app.post('/api/convert', async (req, res) => {
             const output = data.toString();
             stdout += output;
             
-            // מעקב אחר התקדמות ההורדה
+            // מעקב אחר התקדמות
             const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
             if (progressMatch) {
                 downloadProgress = parseFloat(progressMatch[1]);
@@ -129,7 +192,6 @@ app.post('/api/convert', async (req, res) => {
                 console.log(`📊 Download progress: ${downloadProgress}%`);
             }
             
-            // מעקב אחר התקדמות ההמרה
             if (output.includes('[ffmpeg]')) {
                 console.log(`🔄 FFmpeg processing: ${output.trim()}`);
                 lastProgressTime = Date.now();
@@ -143,7 +205,6 @@ app.post('/api/convert', async (req, res) => {
             stderr += output;
             console.log(`stderr: ${output}`);
             
-            // עדכן זמן אם יש פעילות
             if (output.trim().length > 0) {
                 lastProgressTime = Date.now();
             }
@@ -156,13 +217,13 @@ app.post('/api/convert', async (req, res) => {
                 console.log(`⏰ Main timeout after ${CONFIG.TIMEOUT/1000} seconds`);
                 cleanupDirectory(tempDir);
                 res.status(504).json({ 
-                    error: `Conversion timed out after ${CONFIG.TIMEOUT/1000} seconds. Try a shorter video or check if the URL is accessible.` 
+                    error: `Conversion timed out after ${CONFIG.TIMEOUT/1000} seconds. Try a shorter video.` 
                 });
                 responded = true;
             }
         }, CONFIG.TIMEOUT);
 
-        // Timeout להתקדמות - אם אין התקדמות ל-30 שניות
+        // בדיקת התקדמות
         const progressCheck = setInterval(() => {
             const timeSinceProgress = Date.now() - lastProgressTime;
             if (timeSinceProgress > CONFIG.PROGRESS_TIMEOUT && !responded) {
@@ -176,7 +237,7 @@ app.post('/api/convert', async (req, res) => {
                 });
                 responded = true;
             }
-        }, 5000); // בדוק כל 5 שניות
+        }, 5000);
 
         ytdlpProcess.on('close', (code) => {
             clearTimeout(mainTimeout);
@@ -191,28 +252,25 @@ app.post('/api/convert', async (req, res) => {
                     console.error(`📝 Stderr: ${stderr}`);
                     cleanupDirectory(tempDir);
                     
-                    // טיפול משופר בשגיאות
                     let errorMessage = 'Conversion failed';
                     
                     if (stderr.includes('Video unavailable') || stderr.includes('Private video')) {
                         errorMessage = 'Video is unavailable, private, or restricted';
                     } else if (stderr.includes('max-filesize') || stderr.includes('too large')) {
                         errorMessage = `Video file too large (max ${CONFIG.MAX_FILESIZE})`;
-                    } else if (stderr.includes('max-duration') || stderr.includes('too long')) {
-                        errorMessage = `Video too long (max ${CONFIG.MAX_DURATION/60} minutes)`;
                     } else if (stderr.includes('Sign in to confirm') || stderr.includes('age')) {
                         errorMessage = 'Video requires authentication or age verification';
                     } else if (stderr.includes('No video formats') || stderr.includes('format not available')) {
                         errorMessage = 'No suitable audio/video format available';
                     } else if (stderr.includes('network') || stderr.includes('timeout') || stderr.includes('connection')) {
                         errorMessage = 'Network error - please check the URL and try again';
-                    } else if (downloadProgress > 0 && downloadProgress < 100) {
-                        errorMessage = `Download incomplete (${downloadProgress}% completed). Please try again.`;
+                    } else if (stderr.includes('Unsupported URL')) {
+                        errorMessage = 'Unsupported video URL or platform';
                     }
                     
                     res.status(400).json({ error: errorMessage });
                 } else {
-                    // בדיקת קיום הקובץ עם retry
+                    // בדיקת קובץ
                     let attempts = 0;
                     const maxAttempts = 5;
                     
@@ -245,7 +303,7 @@ app.post('/api/convert', async (req, res) => {
                             }
                         } else if (attempts < maxAttempts) {
                             console.log(`⏳ File not ready yet, waiting... (attempt ${attempts}/${maxAttempts})`);
-                            setTimeout(checkFile, 2000); // חכה 2 שניות ונסה שוב
+                            setTimeout(checkFile, 2000);
                         } else {
                             console.error('❌ Output file not found after multiple attempts');
                             cleanupDirectory(tempDir);
