@@ -104,10 +104,10 @@ app.post('/api/convert', async (req, res) => {
     '--audio-format', 'wav',
     '--audio-quality', '0',
     '--max-filesize', CONFIG.MAX_FILESIZE,
-    '--no-playlist',
+    '--no-playlist', // Keeps only the main video
     '--output', path.join(tempDir, `${outputName}.%(ext)s`),
-    '--verbose',
-    url
+    '--quiet', // Reduces output to speed up
+    url.split('?')[0] // Use only the base URL (e.g., https://youtu.be/-zLV4BsRZVk)
 ], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
