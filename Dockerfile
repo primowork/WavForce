@@ -6,19 +6,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
     ffmpeg \
     libavcodec-extra \
     libavformat-dev \
-    curl \
-    wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp and ensure it's in PATH
-RUN pip3 install --break-system-packages yt-dlp && \
-    ln -s /usr/local/bin/yt-dlp /usr/bin/yt-dlp
+# Install yt-dlp using the official binary
+RUN curl -L https://yt-dlp.org/downloads/latest/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
 
 # Create app directory
 WORKDIR /app
@@ -36,11 +32,11 @@ COPY . .
 RUN mkdir -p /tmp && chmod 755 /tmp
 
 # Expose port (use Railway's PORT)
-EXPOSE 8080
+EXPOSE $PORT
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:$PORT/health || exit 1
 
 # Start the application
 CMD ["npm", "start"]
