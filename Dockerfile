@@ -1,29 +1,27 @@
-# WaveForce Railway Dockerfile - משופר
+# WaveForce Railway Dockerfile - עם תיקון SSL
 FROM node:18-slim
 
-# Set noninteractive mode for apt-get
+# Set noninteractive mode
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies including Python3 (נדרש לyt-dlp)
+# Install system dependencies INCLUDING ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     curl \
-    wget \
-    ffmpeg \
-    libavcodec-extra \
-    libavformat-dev \
     ca-certificates \
+    ffmpeg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp via pip (יותר יציב מ-download ישיר)
-RUN pip3 install --break-system-packages yt-dlp && \
-    ln -s /usr/local/bin/yt-dlp /usr/bin/yt-dlp
+# Update CA certificates
+RUN update-ca-certificates
 
-# Verify installations (חשוב לוודא שהכלים עובדים)
-RUN yt-dlp --version && echo "✅ yt-dlp installed successfully"
-RUN ffmpeg -version | head -1 && echo "✅ ffmpeg installed successfully"
+# Install yt-dlp via pip (יותר יציב מהורדה ישירה)
+RUN pip3 install --break-system-packages yt-dlp
+
+# Create symlink if needed
+RUN ln -sf /usr/local/bin/yt-dlp /usr/bin/yt-dlp || true
 
 # Create app directory
 WORKDIR /app
@@ -37,14 +35,14 @@ RUN npm install --production
 # Copy app source
 COPY . .
 
-# Create temp directory for conversions
+# Create temp directory
 RUN mkdir -p /tmp && chmod 755 /tmp
 
-# Use fixed port instead of $PORT for EXPOSE (Railway handles port mapping)
+# Expose port
 EXPOSE 8080
 
-# Fixed healthcheck with proper port
-HEALTHCHECK --interval=30s --timeout=15s --start-period=10s --retries=3 \
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Start the application
