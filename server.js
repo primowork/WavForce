@@ -128,6 +128,14 @@ app.post('/api/convert', async (req, res) => {
                     return;
                 }
                 console.log(`✅ Video duration OK: ${duration}s`);
+            } else {
+                console.error(`❌ Failed to get duration, code: ${code}`);
+                if (!responded) {
+                    cleanupDirectory(tempDir);
+                    res.status(500).json({ error: 'Failed to retrieve video duration' });
+                    responded = true;
+                }
+                return;
             }
             
             // המשך עם ההמרה
@@ -142,10 +150,9 @@ app.post('/api/convert', async (req, res) => {
                 '--audio-format', 'wav',
                 '--audio-quality', '0',
                 '--max-filesize', CONFIG.MAX_FILESIZE,
-                '--max-duration', CONFIG.MAX_DURATION.toString(),
                 '--no-playlist',
                 '--output', path.join(tempDir, `${outputName}.%(ext)s`),
-                '--verbose', // הוסף verbose לדיבוג
+                '--verbose',
                 url
             ], {
                 stdio: ['pipe', 'pipe', 'pipe'],
@@ -184,13 +191,10 @@ app.post('/api/convert', async (req, res) => {
                         console.error(`❌ Exited with code ${code}, stderr: ${stderr}`);
                         cleanupDirectory(tempDir);
                         
-                        // טיפול משופר בשגיאות
                         if (stderr.includes('Video unavailable') || stderr.includes('Private video')) {
                             res.status(400).json({ error: 'Video is unavailable or private' });
                         } else if (stderr.includes('max-filesize') || stderr.includes('too large')) {
                             res.status(400).json({ error: `Video file too large (max ${CONFIG.MAX_FILESIZE})` });
-                        } else if (stderr.includes('max-duration') || stderr.includes('too long')) {
-                            res.status(400).json({ error: `Video too long (max ${CONFIG.MAX_DURATION/60} minutes)` });
                         } else if (stderr.includes('Sign in to confirm')) {
                             res.status(403).json({ error: 'Video requires authentication or age verification' });
                         } else if (stderr.includes('No video formats found')) {
@@ -202,7 +206,6 @@ app.post('/api/convert', async (req, res) => {
                             });
                         }
                     } else {
-                        // בדיקת קיום הקובץ
                         if (!fs.existsSync(outputPath)) {
                             console.error('❌ Output file not found');
                             cleanupDirectory(tempDir);
@@ -223,7 +226,6 @@ app.post('/api/convert', async (req, res) => {
                                 const readStream = fs.createReadStream(outputPath);
                                 readStream.pipe(res);
                                 
-                                // מחיקה מושהית של קבצים זמניים
                                 setTimeout(() => {
                                     cleanupDirectory(tempDir);
                                 }, CONFIG.TEMP_CLEANUP_DELAY);
@@ -233,6 +235,27 @@ app.post('/api/convert', async (req, res) => {
                     responded = true;
                 }
             });
+
+            ytdlpProcess.on('error', (error) => {
+                clearTimeout(timeout);
+                if (!responded) {
+                    console.error(`❌ Process error: ${error.message}`);
+                    cleanupDirectory(tempDir);
+                    res.status(500).json({ error: 'Conversion process failed to start' });
+                    responded = true;
+                }
+            });
+        }
+
+    } catch (error) {
+        if (!responded) {
+            console.error(`❌ Catch error: ${error.message}`);
+            cleanupDirectory(tempDir);
+            res.status(500).json({ error: 'Internal server error' });
+            responded = true;
+        }
+    }
+});
 
             ytdlpProcess.on('error', (error) => {
                 clearTimeout(timeout);
