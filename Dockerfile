@@ -4,8 +4,9 @@ FROM node:18-slim
 # Set noninteractive mode for apt-get
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
+# Install system dependencies including curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     ffmpeg \
     libavcodec-extra \
     libavformat-dev \
