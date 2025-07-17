@@ -99,30 +99,19 @@ app.post('/api/convert', async (req, res) => {
 
         // בדיקה מוקדמת של אורך הווידאו
         console.log('🔍 Checking video info...');
-        const infoProcess = spawn('yt-dlp', [
-            '--print', 'duration',
-            '--no-warnings',
-            url
-        ], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
-        });
-
-        let infoDuration = '';
-        infoProcess.stdout.on('data', (data) => {
-            infoDuration += data.toString().trim();
-        });
-
-        infoProcess.on('close', (code) => {
-            if (code === 0 && infoDuration) {
-                const duration = parseInt(infoDuration);
-                if (duration > CONFIG.MAX_DURATION) {
-                    console.log(`❌ Video too long: ${duration}s (max: ${CONFIG.MAX_DURATION}s)`);
-                    cleanupDirectory(tempDir);
-                    if (!responded) {
-                        res.status(400).json({ 
-                            error: `Video too long (${Math.round(duration/60)} minutes). Maximum allowed: ${CONFIG.MAX_DURATION/60} minutes` 
-                        });
+     const ytdlpProcess = spawn('yt-dlp', [
+    '--extract-audio',
+    '--audio-format', 'wav',
+    '--audio-quality', '0',
+    '--max-filesize', CONFIG.MAX_FILESIZE,
+    '--no-playlist',
+    '--output', path.join(tempDir, `${outputName}.%(ext)s`),
+    '--verbose',
+    url
+], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }
+});
                         responded = true;
                     }
                     return;
