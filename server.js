@@ -38,12 +38,17 @@ app.post('/api/convert', (req, res) => {
     }
 
     const ytdlp = spawn('yt-dlp', [
-        '--extract-audio',
-        '--audio-format', 'wav',
-        '--no-playlist',
-        '--output', path.join(tempDir, outputName + '.%(ext)s'),
-        url
-    ]);
+    '--extract-audio',
+    '--audio-format', 'wav',
+    '--audio-quality', '0',
+    '--no-playlist',
+    '--max-filesize', '100m',
+    '--download-timeout', '180',
+    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    '--extractor-args', 'youtube:player_client=default',
+    '--output', path.join(tempDir, outputName + '.%(ext)s'),
+    url
+]);
 
     let hasResponse = false;
 
