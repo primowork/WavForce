@@ -38,17 +38,12 @@ app.post('/api/convert', (req, res) => {
     }
 
     const ytdlp = spawn('yt-dlp', [
-        '--extract-audio',
-        '--audio-format', 'wav',
-        '--audio-quality', '0',
-        '--no-playlist',
-        '--max-filesize', '100m',
-        '--socket-timeout', '180',  // ← תיקון כאן!
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        '--extractor-args', 'youtube:player_client=ios',  // שינוי קל: 'ios' במקום 'default' – יותר יציב ל-Music
-        '--output', path.join(tempDir, outputName + '.%(ext)s'),
-        url
-    ]);
+    '--extract-audio',
+    '--audio-format', 'wav',
+    '--no-playlist',
+    '--output', path.join(tempDir, outputName + '.%(ext)s'),
+    url
+]);
 
     let hasResponse = false;
 
