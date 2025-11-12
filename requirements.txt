@@ -1,2 +1,4 @@
 yt-dlp>=2024.12.13
-ffmpeg-python
+   ffmpeg-python
+   flask
+   flask-cors
