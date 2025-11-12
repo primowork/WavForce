@@ -9,13 +9,22 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Update yt-dlp on startup to ensure latest version
-console.log('Updating yt-dlp...');
-const updateYtDlp = spawn('pip', ['install', '--upgrade', 'yt-dlp', '--break-system-packages']);
+console.log('Updating yt-dlp to latest version...');
+const updateYtDlp = spawn('pip', ['install', '--upgrade', '--force-reinstall', 'yt-dlp', '--break-system-packages']);
+
+updateYtDlp.stdout.on('data', (data) => {
+    console.log('pip: ' + data.toString().trim());
+});
+
+updateYtDlp.stderr.on('data', (data) => {
+    console.log('pip: ' + data.toString().trim());
+});
+
 updateYtDlp.on('close', (code) => {
     if (code === 0) {
-        console.log('yt-dlp updated successfully');
+        console.log('✅ yt-dlp updated successfully');
     } else {
-        console.log('yt-dlp update failed, but continuing with existing version');
+        console.log('⚠️ yt-dlp update had issues, but continuing...');
     }
 });
 
@@ -24,7 +33,7 @@ app.use(express.json());
 app.use(express.static('.'));
 
 app.get('/', (req, res) => {
-    res.json({ status: 'WaveForce is operational' });
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.get('/health', (req, res) => {
@@ -46,7 +55,8 @@ function getVideoTitle(url) {
         const ytdlp = spawn('yt-dlp', [
             '--print', 'title',
             '--no-playlist',
-            '--extractor-args', 'youtube:player_client=ios',
+            '--extractor-args', 'youtube:player_client=ios,web_creator',
+            '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
             url
         ]);
 
@@ -102,7 +112,8 @@ app.post('/api/convert', async (req, res) => {
         '--extract-audio',
         '--audio-format', 'wav',
         '--no-playlist',
-        '--extractor-args', 'youtube:player_client=ios',
+        '--extractor-args', 'youtube:player_client=ios,web_creator',
+        '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
         '--output', path.join(tempDir, outputName + '.%(ext)s'),
         url
     ]);
