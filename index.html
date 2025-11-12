@@ -562,7 +562,7 @@
             }
 
             // Basic URL validation
-            const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
+            const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\/.+/;
             if (!youtubeRegex.test(url)) {
                 status.textContent = 'Error: Please enter a valid YouTube URL';
                 status.style.color = '#ff4444';
