@@ -34,6 +34,10 @@
         <input type="text" id="youtubeUrl" placeholder="Enter YouTube URL (max 20 minutes)">
     </div>
     <div>
+        <label>📝 Custom Filename (Optional)</label>
+        <input type="text" id="filename" placeholder="Enter custom filename">
+    </div>
+    <div>
         <button onclick="convertToWav()">⚡ Convert to WAV</button>
     </div>
     
@@ -112,6 +116,7 @@
             }
 
             const url = document.getElementById('youtubeUrl').value;
+            const filename = document.getElementById('filename').value;
             const status = document.getElementById('status');
             const downloadLink = document.getElementById('downloadLink');
 
@@ -150,7 +155,7 @@
                 const response = await fetch('/api/convert', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url })
+                    body: JSON.stringify({ url, filename })
                 });
 
                 clearInterval(progressInterval);
@@ -163,19 +168,8 @@
                 updateProgress(100, 'Conversion complete! Preparing download...');
                 
                 const blob = await response.blob();
-                
-                // Get filename from Content-Disposition header if available
-                const contentDisposition = response.headers.get('Content-Disposition');
-                let finalFilename = 'waveforce_output.wav';
-                
-                if (contentDisposition) {
-                    const filenameMatch = contentDisposition.match(/filename="?(.+?)"?$/);
-                    if (filenameMatch) {
-                        finalFilename = filenameMatch[1];
-                    }
-                }
-                
                 const downloadUrl = window.URL.createObjectURL(blob);
+                const finalFilename = filename ? `${filename}.wav` : 'waveforce_output.wav';
                 
                 downloadLink.href = downloadUrl;
                 downloadLink.download = finalFilename;
