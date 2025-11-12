@@ -35,6 +35,7 @@ function getVideoTitle(url) {
         const ytdlp = spawn('yt-dlp', [
             '--print', 'title',
             '--no-playlist',
+            '--extractor-args', 'youtube:player_client=android,web',
             url
         ]);
 
@@ -90,6 +91,7 @@ app.post('/api/convert', async (req, res) => {
         '--extract-audio',
         '--audio-format', 'wav',
         '--no-playlist',
+        '--extractor-args', 'youtube:player_client=android,web',
         '--output', path.join(tempDir, outputName + '.%(ext)s'),
         url
     ]);
