@@ -20,18 +20,67 @@ app.get('/health', (req, res) => {
     res.json({ status: 'healthy' });
 });
 
-app.post('/api/convert', (req, res) => {
-    const { url, filename } = req.body;
+// Helper function to clean filename
+function cleanFilename(filename) {
+    // Remove or replace invalid characters for filenames
+    return filename
+        .replace(/[<>:"/\\|?*]/g, '_')  // Replace invalid chars with underscore
+        .replace(/\s+/g, '_')            // Replace spaces with underscore
+        .substring(0, 200);              // Limit length
+}
+
+// Helper function to get video title
+function getVideoTitle(url) {
+    return new Promise((resolve, reject) => {
+        const ytdlp = spawn('yt-dlp', [
+            '--print', 'title',
+            '--no-playlist',
+            url
+        ]);
+
+        let title = '';
+        
+        ytdlp.stdout.on('data', (data) => {
+            title += data.toString().trim();
+        });
+
+        ytdlp.on('close', (code) => {
+            if (code === 0 && title) {
+                resolve(cleanFilename(title));
+            } else {
+                reject(new Error('Failed to get video title'));
+            }
+        });
+
+        ytdlp.on('error', (error) => {
+            reject(error);
+        });
+    });
+}
+
+app.post('/api/convert', async (req, res) => {
+    const { url } = req.body;
     
     if (!url) {
         return res.status(400).json({ error: 'YouTube URL is required' });
     }
 
     const randomId = crypto.randomBytes(4).toString('hex');
-    const outputName = filename ? filename + '_' + randomId : 'waveforce_' + randomId;
     const tempDir = '/tmp/temp_' + randomId;
     
     console.log('Converting: ' + url);
+
+    let videoTitle;
+    try {
+        // Get video title first
+        videoTitle = await getVideoTitle(url);
+        console.log('Video title: ' + videoTitle);
+    } catch (error) {
+        console.log('Could not get video title, using default name');
+        videoTitle = 'waveforce_audio';
+    }
+
+    const outputName = videoTitle;
     
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
