@@ -17,14 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Update CA certificates
 RUN update-ca-certificates
 
-# Install yt-dlp via pip (יותר יציב מהורדה ישירה)
-RUN pip3 install --break-system-packages yt-dlp
+# Create app directory
+WORKDIR /app
+
+# Copy requirements.txt and install Python dependencies (yt-dlp)
+COPY requirements.txt ./
+RUN pip3 install --break-system-packages -r requirements.txt
 
 # Create symlink if needed
 RUN ln -sf /usr/local/bin/yt-dlp /usr/bin/yt-dlp || true
-
-# Create app directory
-WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
