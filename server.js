@@ -8,17 +8,20 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Cache for visitor_data to simulate persistent browser
-let visitorDataCache = {
-    data: null,
-    timestamp: null
-};
+// Install bleeding-edge yt-dlp directly from GitHub master
+console.log('🔄 Installing yt-dlp from GitHub master branch...');
+const updateYtDlp = spawn('pip', [
+    'install', 
+    '--upgrade', 
+    '--force-reinstall',
+    'git+https://github.com/yt-dlp/yt-dlp.git@master',
+    '--break-system-packages'
+]);
 
-console.log('🔄 Updating yt-dlp...');
-const updateYtDlp = spawn('pip', ['install', '--upgrade', '--force-reinstall', 'yt-dlp', '--break-system-packages']);
-
+updateYtDlp.stdout.on('data', (data) => console.log('pip:', data.toString().trim()));
+updateYtDlp.stderr.on('data', (data) => console.log('pip:', data.toString().trim()));
 updateYtDlp.on('close', (code) => {
-    console.log(code === 0 ? '✅ yt-dlp updated' : '⚠️ Update had issues');
+    console.log(code === 0 ? '✅ Bleeding-edge yt-dlp installed' : '⚠️ Install issues');
 });
 
 app.use(cors());
@@ -29,89 +32,62 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 
 function cleanFilename(filename) {
-    return filename
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/\s+/g, '_')
-        .substring(0, 200);
-}
-
-// Generate visitor_data programmatically (simulates YouTube browser session)
-function generateVisitorData() {
-    if (visitorDataCache.data && visitorDataCache.timestamp && 
-        (Date.now() - visitorDataCache.timestamp < 3600000)) {
-        return visitorDataCache.data;
-    }
-    
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-    let result = 'Cgt';
-    for (let i = 0; i < 21; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    
-    visitorDataCache = {
-        data: result,
-        timestamp: Date.now()
-    };
-    
-    return result;
+    return filename.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').substring(0, 200);
 }
 
 function getVideoTitle(url) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
         const args = [
             '--print', 'title',
             '--no-playlist',
-            '--extractor-args', 'youtube:player_client=android',
-            '--no-check-certificates'
+            '--extractor-args', 'youtube:player_client=android_testsuite',
+            url
         ];
         
-        args.push(url);
         const ytdlp = spawn('yt-dlp', args);
         let title = '';
         
-        ytdlp.stdout.on('data', (data) => {
-            title += data.toString().trim();
-        });
-
+        ytdlp.stdout.on('data', (data) => title += data.toString().trim());
         ytdlp.on('close', (code) => {
-            if (code === 0 && title) {
-                resolve(cleanFilename(title));
-            } else {
-                reject(new Error('Failed'));
-            }
+            resolve(code === 0 && title ? cleanFilename(title) : 'waveforce_audio');
         });
     });
 }
 
-async function downloadWithMethods(url, tempDir, outputName) {
-    const visitorData = generateVisitorData();
-    
+async function downloadWithLatestMethods(url, tempDir, outputName) {
+    // Methods that worked well in late 2024
     const methods = [
         {
+            name: '🧪 Android TestSuite',
+            args: [
+                '--extractor-args', 'youtube:player_client=android_testsuite',
+                '--extractor-args', 'youtube:skip=dash,hls'
+            ]
+        },
+        {
             name: '🤖 Android',
-            args: ['--extractor-args', 'youtube:player_client=android']
+            args: [
+                '--extractor-args', 'youtube:player_client=android',
+                '--extractor-args', 'youtube:skip=dash'
+            ]
         },
         {
             name: '🎵 Android Music',
             args: ['--extractor-args', 'youtube:player_client=android_music']
         },
         {
-            name: '📱 iOS',
-            args: ['--extractor-args', 'youtube:player_client=ios']
+            name: '🔧 Android Creator',
+            args: ['--extractor-args', 'youtube:player_client=android_creator']
         },
         {
             name: '🧪 Android VR',
             args: ['--extractor-args', 'youtube:player_client=android_vr']
         },
         {
-            name: '📺 TV Embedded',
-            args: ['--extractor-args', 'youtube:player_client=tv_embedded']
-        },
-        {
-            name: '🌐 Web + Visitor',
+            name: '📱 iOS',
             args: [
-                '--extractor-args', 'youtube:player_client=web',
-                '--extractor-args', `youtube:visitor_data=${visitorData}`
+                '--extractor-args', 'youtube:player_client=ios',
+                '--extractor-args', 'youtube:skip=dash'
             ]
         },
         {
@@ -119,8 +95,8 @@ async function downloadWithMethods(url, tempDir, outputName) {
             args: ['--extractor-args', 'youtube:player_client=mediaconnect']
         },
         {
-            name: '🔧 Android Creator',
-            args: ['--extractor-args', 'youtube:player_client=android_creator']
+            name: '📺 TV Embedded',
+            args: ['--extractor-args', 'youtube:player_client=tv_embedded']
         }
     ];
 
@@ -137,7 +113,7 @@ async function downloadWithMethods(url, tempDir, outputName) {
         } catch (error) {
             console.log(`❌ ${error.message}`);
             if (i < methods.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 1500));
             }
         }
     }
@@ -154,8 +130,9 @@ function attemptDownload(url, tempDir, outputName, extraArgs = []) {
             '--no-playlist',
             '--no-check-certificates',
             '--no-warnings',
-            '--socket-timeout', '20',
-            '--retries', '2',
+            '--socket-timeout', '30',
+            '--retries', '3',
+            '--fragment-retries', '3',
             ...extraArgs,
             '--output', path.join(tempDir, outputName + '.%(ext)s'),
             url
@@ -171,7 +148,7 @@ function attemptDownload(url, tempDir, outputName, extraArgs = []) {
                 reject(new Error('Timeout'));
                 hasEnded = true;
             }
-        }, 40000);
+        }, 45000);
 
         ytdlp.stdout.on('data', () => process.stdout.write('.'));
         ytdlp.stderr.on('data', (data) => errorOutput += data.toString());
@@ -192,6 +169,7 @@ function attemptDownload(url, tempDir, outputName, extraArgs = []) {
                 let msg = 'Failed';
                 if (errorOutput.includes('Sign in') || errorOutput.includes('bot')) msg = 'Bot detected';
                 else if (errorOutput.includes('unavailable')) msg = 'Unavailable';
+                else if (errorOutput.includes('format')) msg = 'Format issue';
                 reject(new Error(msg));
             }
         });
@@ -233,7 +211,7 @@ app.post('/api/convert', async (req, res) => {
     let hasResponse = false;
 
     try {
-        const result = await downloadWithMethods(url, tempDir, videoTitle);
+        const result = await downloadWithLatestMethods(url, tempDir, videoTitle);
         
         if (hasResponse) return;
         
@@ -260,8 +238,8 @@ app.post('/api/convert', async (req, res) => {
             cleanup();
             
             let msg = error.message;
-            if (msg.includes('Bot')) {
-                msg = 'YouTube blocking datacenter IPs. Solutions: 1) Try different video 2) Wait 5 min 3) Switch to Render.com/Fly.io';
+            if (msg.includes('Bot detected')) {
+                msg = 'YouTube blocking - was working last month. Try: different video or wait 10 min';
             }
             
             res.status(400).json({ error: msg });
@@ -279,6 +257,6 @@ app.post('/api/convert', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log('⚡ WaveForce v2.0 - Port', PORT);
-    console.log('🚀 8 fallback methods + programmatic visitor_data');
+    console.log('⚡ WaveForce - Port', PORT);
+    console.log('🔥 Using bleeding-edge yt-dlp from GitHub');
 });
