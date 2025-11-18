@@ -55,9 +55,11 @@ function getVideoTitle(url) {
         const args = [
             '--print', 'title',
             '--no-playlist',
-            '--extractor-args', 'youtube:player_client=ios,web',
-            '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
-            '--no-check-certificates'
+            '--extractor-args', 'youtube:player_client=android',
+            '--no-check-certificates',
+            '--extractor-retries', '5',
+            '--sleep-interval', '1',
+            '--max-sleep-interval', '3'
         ];
         
         // Add cookies if file exists
@@ -91,6 +93,133 @@ function getVideoTitle(url) {
     });
 }
 
+// Try multiple extraction methods
+async function downloadWithFallback(url, tempDir, outputName) {
+    const methods = [
+        {
+            name: 'Android client',
+            args: ['--extractor-args', 'youtube:player_client=android']
+        },
+        {
+            name: 'Android Music client',
+            args: ['--extractor-args', 'youtube:player_client=android_music']
+        },
+        {
+            name: 'iOS client',
+            args: ['--extractor-args', 'youtube:player_client=ios']
+        },
+        {
+            name: 'Web client',
+            args: ['--extractor-args', 'youtube:player_client=web']
+        },
+        {
+            name: 'TV embedded client',
+            args: ['--extractor-args', 'youtube:player_client=tv_embedded']
+        }
+    ];
+
+    for (let i = 0; i < methods.length; i++) {
+        const method = methods[i];
+        console.log(`Trying method ${i + 1}/${methods.length}: ${method.name}`);
+        
+        try {
+            const result = await attemptDownload(url, tempDir, outputName, method.args);
+            if (result.success) {
+                console.log(`✅ Success with ${method.name}`);
+                return result;
+            }
+        } catch (error) {
+            console.log(`❌ Failed with ${method.name}: ${error.message}`);
+            if (i === methods.length - 1) {
+                throw error;
+            }
+        }
+    }
+    
+    throw new Error('All extraction methods failed');
+}
+
+function attemptDownload(url, tempDir, outputName, extraArgs = []) {
+    return new Promise((resolve, reject) => {
+        const args = [
+            '--extract-audio',
+            '--audio-format', 'wav',
+            '--audio-quality', '0',
+            '--no-playlist',
+            '--no-check-certificates',
+            '--no-warnings',
+            '--extractor-retries', '3',
+            '--sleep-interval', '1',
+            '--max-sleep-interval', '2',
+            ...extraArgs
+        ];
+        
+        // Add cookies if file exists
+        const cookiesPath = path.join(__dirname, 'youtube_cookies.txt');
+        if (fs.existsSync(cookiesPath)) {
+            args.push('--cookies', cookiesPath);
+        }
+        
+        args.push('--output', path.join(tempDir, outputName + '.%(ext)s'));
+        args.push(url);
+        
+        const ytdlp = spawn('yt-dlp', args);
+        let errorOutput = '';
+        let hasEnded = false;
+
+        const timeout = setTimeout(() => {
+            if (!hasEnded) {
+                ytdlp.kill();
+                reject(new Error('Timeout'));
+                hasEnded = true;
+            }
+        }, 60000); // 60 second timeout per attempt
+
+        ytdlp.stdout.on('data', (data) => {
+            console.log(data.toString());
+        });
+
+        ytdlp.stderr.on('data', (data) => {
+            const output = data.toString();
+            console.log(output);
+            errorOutput += output;
+        });
+
+        ytdlp.on('close', (code) => {
+            clearTimeout(timeout);
+            if (hasEnded) return;
+            hasEnded = true;
+            
+            if (code === 0) {
+                const wavFile = path.join(tempDir, outputName + '.wav');
+                if (fs.existsSync(wavFile)) {
+                    resolve({ success: true, file: wavFile });
+                } else {
+                    reject(new Error('File not created'));
+                }
+            } else {
+                let errorMessage = 'Download failed';
+                if (errorOutput.includes('Sign in') || errorOutput.includes('not a bot')) {
+                    errorMessage = 'Bot detection - trying alternative method';
+                } else if (errorOutput.includes('Private video') || errorOutput.includes('unavailable')) {
+                    errorMessage = 'Video is private or unavailable';
+                } else if (errorOutput.includes('requested format')) {
+                    errorMessage = 'Audio format not available';
+                }
+                reject(new Error(errorMessage));
+            }
+        });
+
+        ytdlp.on('error', (error) => {
+            clearTimeout(timeout);
+            if (!hasEnded) {
+                hasEnded = true;
+                reject(error);
+            }
+        });
+    });
+}
+
 app.post('/api/convert', async (req, res) => {
     const { url } = req.body;
     
@@ -119,88 +248,20 @@ app.post('/api/convert', async (req, res) => {
         fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    const args = [
-        '--extract-audio',
-        '--audio-format', 'wav',
-        '--audio-quality', '0',
-        '--no-playlist',
-        '--extractor-args', 'youtube:player_client=ios,web',
-        '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
-        '--no-check-certificates',
-        '--no-warnings'
-    ];
-    
-    // Add cookies if file exists
-    const cookiesPath = path.join(__dirname, 'youtube_cookies.txt');
-    if (fs.existsSync(cookiesPath)) {
-        args.push('--cookies', cookiesPath);
-        console.log('Using cookies for download');
-    }
-    
-    args.push('--output', path.join(tempDir, outputName + '.%(ext)s'));
-    args.push(url);
-    
-    const ytdlp = spawn('yt-dlp', args);
-
     let hasResponse = false;
-    let errorOutput = '';
 
-    const timeout = setTimeout(() => {
-        if (!hasResponse) {
-            console.log('Timeout');
-            ytdlp.kill();
-            cleanup();
-            res.status(504).json({ error: 'Timeout - try a shorter video' });
-            hasResponse = true;
-        }
-    }, 90000);
-
-    ytdlp.stdout.on('data', (data) => {
-        console.log(data.toString());
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-        const output = data.toString();
-        console.log(output);
-        errorOutput += output;
-    });
-
-    ytdlp.on('close', (code) => {
-        clearTimeout(timeout);
+    try {
+        const result = await downloadWithFallback(url, tempDir, outputName);
         
         if (hasResponse) return;
         
-        console.log('Process exited with code: ' + code);
-        
-        if (code !== 0) {
-            cleanup();
-            
-            // Provide more specific error messages
-            let errorMessage = 'Conversion failed';
-            if (errorOutput.includes('Private video') || errorOutput.includes('unavailable')) {
-                errorMessage = 'Video is private or unavailable';
-            } else if (errorOutput.includes('Sign in') || errorOutput.includes('members-only')) {
-                errorMessage = 'Video requires authentication';
-            } else if (errorOutput.includes('n challenge')) {
-                errorMessage = 'YouTube protection detected - trying alternative method';
-            } else if (errorOutput.includes('requested format')) {
-                errorMessage = 'Audio format not available for this video';
-            }
-            
-            res.status(400).json({ error: errorMessage });
-            hasResponse = true;
-            return;
-        }
-
-        const wavFile = path.join(tempDir, outputName + '.wav');
-        
-        if (fs.existsSync(wavFile)) {
+        if (result.success && fs.existsSync(result.file)) {
             console.log('File ready, sending...');
             
             res.setHeader('Content-Type', 'audio/wav');
             res.setHeader('Content-Disposition', 'attachment; filename="' + outputName + '.wav"');
             
-            const fileStream = fs.createReadStream(wavFile);
+            const fileStream = fs.createReadStream(result.file);
             fileStream.pipe(res);
             
             fileStream.on('end', () => {
@@ -209,22 +270,24 @@ app.post('/api/convert', async (req, res) => {
             
             hasResponse = true;
         } else {
-            console.log('File not found');
             cleanup();
             res.status(500).json({ error: 'File not created' });
             hasResponse = true;
         }
-    });
-
-    ytdlp.on('error', (error) => {
-        clearTimeout(timeout);
+    } catch (error) {
         if (!hasResponse) {
-            console.log('Process error: ' + error);
+            console.log('All methods failed: ' + error.message);
             cleanup();
-            res.status(500).json({ error: 'Process failed' });
+            
+            let errorMessage = error.message;
+            if (errorMessage.includes('Bot detection') || errorMessage.includes('Sign in')) {
+                errorMessage = 'YouTube bot detection - please try again in a few moments or try a different video';
+            }
+            
+            res.status(400).json({ error: errorMessage });
             hasResponse = true;
         }
-    });
+    }
 
     function cleanup() {
         try {
