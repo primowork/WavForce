@@ -8,71 +8,65 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Update yt-dlp on startup to ensure latest version
-console.log('Updating yt-dlp to latest version...');
+// Cache for visitor_data to simulate persistent browser
+let visitorDataCache = {
+    data: null,
+    timestamp: null
+};
+
+console.log('🔄 Updating yt-dlp...');
 const updateYtDlp = spawn('pip', ['install', '--upgrade', '--force-reinstall', 'yt-dlp', '--break-system-packages']);
 
-updateYtDlp.stdout.on('data', (data) => {
-    console.log('pip: ' + data.toString().trim());
-});
-
-updateYtDlp.stderr.on('data', (data) => {
-    console.log('pip: ' + data.toString().trim());
-});
-
 updateYtDlp.on('close', (code) => {
-    if (code === 0) {
-        console.log('✅ yt-dlp updated successfully');
-    } else {
-        console.log('⚠️ yt-dlp update had issues, but continuing...');
-    }
+    console.log(code === 0 ? '✅ yt-dlp updated' : '⚠️ Update had issues');
 });
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'healthy' });
-});
-
-// Helper function to clean filename
 function cleanFilename(filename) {
-    // Remove or replace invalid characters for filenames
     return filename
-        .replace(/[<>:"/\\|?*]/g, '_')  // Replace invalid chars with underscore
-        .replace(/\s+/g, '_')            // Replace spaces with underscore
-        .substring(0, 200);              // Limit length
+        .replace(/[<>:"/\\|?*]/g, '_')
+        .replace(/\s+/g, '_')
+        .substring(0, 200);
 }
 
-// Helper function to get video title
+// Generate visitor_data programmatically (simulates YouTube browser session)
+function generateVisitorData() {
+    if (visitorDataCache.data && visitorDataCache.timestamp && 
+        (Date.now() - visitorDataCache.timestamp < 3600000)) {
+        return visitorDataCache.data;
+    }
+    
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let result = 'Cgt';
+    for (let i = 0; i < 21; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    
+    visitorDataCache = {
+        data: result,
+        timestamp: Date.now()
+    };
+    
+    return result;
+}
+
 function getVideoTitle(url) {
     return new Promise((resolve, reject) => {
         const args = [
             '--print', 'title',
             '--no-playlist',
             '--extractor-args', 'youtube:player_client=android',
-            '--no-check-certificates',
-            '--extractor-retries', '5',
-            '--sleep-interval', '1',
-            '--max-sleep-interval', '3'
+            '--no-check-certificates'
         ];
         
-        // Add cookies if file exists
-        const cookiesPath = path.join(__dirname, 'youtube_cookies.txt');
-        if (fs.existsSync(cookiesPath)) {
-            args.push('--cookies', cookiesPath);
-            console.log('Using cookies for title extraction');
-        }
-        
         args.push(url);
-        
         const ytdlp = spawn('yt-dlp', args);
-
         let title = '';
         
         ytdlp.stdout.on('data', (data) => {
@@ -83,60 +77,72 @@ function getVideoTitle(url) {
             if (code === 0 && title) {
                 resolve(cleanFilename(title));
             } else {
-                reject(new Error('Failed to get video title'));
+                reject(new Error('Failed'));
             }
-        });
-
-        ytdlp.on('error', (error) => {
-            reject(error);
         });
     });
 }
 
-// Try multiple extraction methods
-async function downloadWithFallback(url, tempDir, outputName) {
+async function downloadWithMethods(url, tempDir, outputName) {
+    const visitorData = generateVisitorData();
+    
     const methods = [
         {
-            name: 'Android client',
+            name: '🤖 Android',
             args: ['--extractor-args', 'youtube:player_client=android']
         },
         {
-            name: 'Android Music client',
+            name: '🎵 Android Music',
             args: ['--extractor-args', 'youtube:player_client=android_music']
         },
         {
-            name: 'iOS client',
+            name: '📱 iOS',
             args: ['--extractor-args', 'youtube:player_client=ios']
         },
         {
-            name: 'Web client',
-            args: ['--extractor-args', 'youtube:player_client=web']
+            name: '🧪 Android VR',
+            args: ['--extractor-args', 'youtube:player_client=android_vr']
         },
         {
-            name: 'TV embedded client',
+            name: '📺 TV Embedded',
             args: ['--extractor-args', 'youtube:player_client=tv_embedded']
+        },
+        {
+            name: '🌐 Web + Visitor',
+            args: [
+                '--extractor-args', 'youtube:player_client=web',
+                '--extractor-args', `youtube:visitor_data=${visitorData}`
+            ]
+        },
+        {
+            name: '🎮 MediaConnect',
+            args: ['--extractor-args', 'youtube:player_client=mediaconnect']
+        },
+        {
+            name: '🔧 Android Creator',
+            args: ['--extractor-args', 'youtube:player_client=android_creator']
         }
     ];
 
     for (let i = 0; i < methods.length; i++) {
         const method = methods[i];
-        console.log(`Trying method ${i + 1}/${methods.length}: ${method.name}`);
+        console.log(`${method.name} [${i + 1}/${methods.length}]`);
         
         try {
             const result = await attemptDownload(url, tempDir, outputName, method.args);
             if (result.success) {
-                console.log(`✅ Success with ${method.name}`);
+                console.log(`✅ SUCCESS`);
                 return result;
             }
         } catch (error) {
-            console.log(`❌ Failed with ${method.name}: ${error.message}`);
-            if (i === methods.length - 1) {
-                throw error;
+            console.log(`❌ ${error.message}`);
+            if (i < methods.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
     }
     
-    throw new Error('All extraction methods failed');
+    throw new Error('All methods failed');
 }
 
 function attemptDownload(url, tempDir, outputName, extraArgs = []) {
@@ -148,20 +154,12 @@ function attemptDownload(url, tempDir, outputName, extraArgs = []) {
             '--no-playlist',
             '--no-check-certificates',
             '--no-warnings',
-            '--extractor-retries', '3',
-            '--sleep-interval', '1',
-            '--max-sleep-interval', '2',
-            ...extraArgs
+            '--socket-timeout', '20',
+            '--retries', '2',
+            ...extraArgs,
+            '--output', path.join(tempDir, outputName + '.%(ext)s'),
+            url
         ];
-        
-        // Add cookies if file exists
-        const cookiesPath = path.join(__dirname, 'youtube_cookies.txt');
-        if (fs.existsSync(cookiesPath)) {
-            args.push('--cookies', cookiesPath);
-        }
-        
-        args.push('--output', path.join(tempDir, outputName + '.%(ext)s'));
-        args.push(url);
         
         const ytdlp = spawn('yt-dlp', args);
         let errorOutput = '';
@@ -173,17 +171,10 @@ function attemptDownload(url, tempDir, outputName, extraArgs = []) {
                 reject(new Error('Timeout'));
                 hasEnded = true;
             }
-        }, 60000); // 60 second timeout per attempt
+        }, 40000);
 
-        ytdlp.stdout.on('data', (data) => {
-            console.log(data.toString());
-        });
-
-        ytdlp.stderr.on('data', (data) => {
-            const output = data.toString();
-            console.log(output);
-            errorOutput += output;
-        });
+        ytdlp.stdout.on('data', () => process.stdout.write('.'));
+        ytdlp.stderr.on('data', (data) => errorOutput += data.toString());
 
         ytdlp.on('close', (code) => {
             clearTimeout(timeout);
@@ -195,26 +186,21 @@ function attemptDownload(url, tempDir, outputName, extraArgs = []) {
                 if (fs.existsSync(wavFile)) {
                     resolve({ success: true, file: wavFile });
                 } else {
-                    reject(new Error('File not created'));
+                    reject(new Error('No file'));
                 }
             } else {
-                let errorMessage = 'Download failed';
-                if (errorOutput.includes('Sign in') || errorOutput.includes('not a bot')) {
-                    errorMessage = 'Bot detection - trying alternative method';
-                } else if (errorOutput.includes('Private video') || errorOutput.includes('unavailable')) {
-                    errorMessage = 'Video is private or unavailable';
-                } else if (errorOutput.includes('requested format')) {
-                    errorMessage = 'Audio format not available';
-                }
-                reject(new Error(errorMessage));
+                let msg = 'Failed';
+                if (errorOutput.includes('Sign in') || errorOutput.includes('bot')) msg = 'Bot detected';
+                else if (errorOutput.includes('unavailable')) msg = 'Unavailable';
+                reject(new Error(msg));
             }
         });
 
-        ytdlp.on('error', (error) => {
+        ytdlp.on('error', () => {
             clearTimeout(timeout);
             if (!hasEnded) {
                 hasEnded = true;
-                reject(error);
+                reject(new Error('Process error'));
             }
         });
     });
@@ -224,26 +210,22 @@ app.post('/api/convert', async (req, res) => {
     const { url } = req.body;
     
     if (!url) {
-        return res.status(400).json({ error: 'YouTube URL is required' });
+        return res.status(400).json({ error: 'URL required' });
     }
 
     const randomId = crypto.randomBytes(4).toString('hex');
     const tempDir = '/tmp/temp_' + randomId;
     
-    console.log('Converting: ' + url);
+    console.log('\n🎬', url);
 
     let videoTitle;
     try {
-        // Get video title first
         videoTitle = await getVideoTitle(url);
-        console.log('Video title: ' + videoTitle);
-    } catch (error) {
-        console.log('Could not get video title, using default name');
+        console.log('📝', videoTitle);
+    } catch {
         videoTitle = 'waveforce_audio';
     }
 
-    const outputName = videoTitle;
-    
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
     }
@@ -251,22 +233,20 @@ app.post('/api/convert', async (req, res) => {
     let hasResponse = false;
 
     try {
-        const result = await downloadWithFallback(url, tempDir, outputName);
+        const result = await downloadWithMethods(url, tempDir, videoTitle);
         
         if (hasResponse) return;
         
         if (result.success && fs.existsSync(result.file)) {
-            console.log('File ready, sending...');
+            const stats = fs.statSync(result.file);
+            console.log(`✅ ${(stats.size / 1024 / 1024).toFixed(2)}MB\n`);
             
             res.setHeader('Content-Type', 'audio/wav');
-            res.setHeader('Content-Disposition', 'attachment; filename="' + outputName + '.wav"');
+            res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}.wav"`);
             
             const fileStream = fs.createReadStream(result.file);
             fileStream.pipe(res);
-            
-            fileStream.on('end', () => {
-                cleanup();
-            });
+            fileStream.on('end', cleanup);
             
             hasResponse = true;
         } else {
@@ -276,15 +256,15 @@ app.post('/api/convert', async (req, res) => {
         }
     } catch (error) {
         if (!hasResponse) {
-            console.log('All methods failed: ' + error.message);
+            console.log('❌', error.message, '\n');
             cleanup();
             
-            let errorMessage = error.message;
-            if (errorMessage.includes('Bot detection') || errorMessage.includes('Sign in')) {
-                errorMessage = 'YouTube bot detection - please try again in a few moments or try a different video';
+            let msg = error.message;
+            if (msg.includes('Bot')) {
+                msg = 'YouTube blocking datacenter IPs. Solutions: 1) Try different video 2) Wait 5 min 3) Switch to Render.com/Fly.io';
             }
             
-            res.status(400).json({ error: errorMessage });
+            res.status(400).json({ error: msg });
             hasResponse = true;
         }
     }
@@ -293,14 +273,12 @@ app.post('/api/convert', async (req, res) => {
         try {
             if (fs.existsSync(tempDir)) {
                 fs.rmSync(tempDir, { recursive: true, force: true });
-                console.log('Cleaned up');
             }
-        } catch (e) {
-            console.log('Cleanup warning: ' + e.message);
-        }
+        } catch (e) {}
     }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log('WaveForce running on port ' + PORT);
+    console.log('⚡ WaveForce v2.0 - Port', PORT);
+    console.log('🚀 8 fallback methods + programmatic visitor_data');
 });
