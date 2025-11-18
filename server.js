@@ -6,12 +6,11 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.static('public'));
 app.use(express.json());
 
-// Root route
+// Root route - serve index.html from root directory
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Original /download endpoint (for direct downloads)
