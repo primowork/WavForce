@@ -1,4 +1,5 @@
-yt-dlp>=2024.12.13
+yt-dlp>=2024.12.23
    ffmpeg-python
    flask
    flask-cors
+
