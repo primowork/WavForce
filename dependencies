@@ -1,0 +1,34 @@
+{
+  "name": "waveforce",
+  "version": "1.0.0",
+  "description": "WaveForce - YouTube to WAV converter",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+```
+
+**6. Commit changes** (כפתור ירוק למטה)
+
+**7. חזור ל-Railway** - הוא יעשה redeploy אוטומטית!
+
+---
+
+## בדוק ב-Railway:
+
+אחרי ה-deploy, תראה ב-Logs:
+```
+WaveForce running on port 8080
+```
+
+במקום:
+```
+Directory Listings: visible
