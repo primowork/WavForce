@@ -7,7 +7,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
+app.use(express.json());
 
+// Root route
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Original /download endpoint (for direct downloads)
 app.get('/download', (req, res) => {
   const url = req.query.url;
   
@@ -15,6 +22,22 @@ app.get('/download', (req, res) => {
     return res.status(400).json({ error: 'URL is required' });
   }
 
+  convertAndSend(url, null, res);
+});
+
+// New /api/convert endpoint (for the web interface)
+app.post('/api/convert', (req, res) => {
+  const { url, filename } = req.body;
+  
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  convertAndSend(url, filename, res);
+});
+
+// Shared conversion function
+function convertAndSend(url, customFilename, res) {
   const outputTemplate = `/tmp/%(title)s.%(ext)s`;
   
   const ytDlpArgs = [
@@ -64,21 +87,34 @@ app.get('/download', (req, res) => {
     // Get just the basename and sanitize it aggressively
     const baseFilename = path.basename(filename);
     
-    // Create a completely safe filename using Buffer encoding check
+    // Create a completely safe filename
     let sanitizedFilename;
     try {
-      // Try to encode as ASCII to check for problematic characters
-      sanitizedFilename = baseFilename
-        .split('')
-        .map(char => {
-          const code = char.charCodeAt(0);
-          // Keep only printable ASCII characters (32-126)
-          if (code >= 32 && code <= 126 && char !== '"' && char !== '\\') {
-            return char;
-          }
-          return '_';
-        })
-        .join('');
+      if (customFilename) {
+        // Use custom filename if provided
+        sanitizedFilename = customFilename
+          .split('')
+          .map(char => {
+            const code = char.charCodeAt(0);
+            if (code >= 32 && code <= 126 && char !== '"' && char !== '\\') {
+              return char;
+            }
+            return '_';
+          })
+          .join('') + '.wav';
+      } else {
+        // Sanitize the original filename
+        sanitizedFilename = baseFilename
+          .split('')
+          .map(char => {
+            const code = char.charCodeAt(0);
+            if (code >= 32 && code <= 126 && char !== '"' && char !== '\\') {
+              return char;
+            }
+            return '_';
+          })
+          .join('');
+      }
       
       // If the filename is now empty or too short, use a default
       if (sanitizedFilename.length < 3) {
@@ -98,7 +134,6 @@ app.get('/download', (req, res) => {
       res.setHeader('Content-Disposition', `attachment; filename="${sanitizedFilename}"`);
     } catch (headerError) {
       console.error('Error setting headers:', headerError);
-      // Try with an even simpler filename
       res.setHeader('Content-Type', 'audio/wav');
       res.setHeader('Content-Disposition', `attachment; filename="audio_${Date.now()}.wav"`);
     }
@@ -115,7 +150,6 @@ app.get('/download', (req, res) => {
     fileStream.pipe(res);
     
     fileStream.on('end', () => {
-      // Clean up the file after sending
       fs.unlink(filename, (err) => {
         if (err) {
           console.error('Error deleting file:', err);
@@ -127,7 +161,6 @@ app.get('/download', (req, res) => {
 
     res.on('error', (err) => {
       console.error('Response error:', err);
-      // Try to clean up the file even if there was an error
       if (fs.existsSync(filename)) {
         fs.unlink(filename, () => {});
       }
@@ -138,8 +171,8 @@ app.get('/download', (req, res) => {
     console.error('Failed to start yt-dlp:', err);
     res.status(500).json({ error: 'Failed to start download process' });
   });
-});
+}
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`WaveForce running on port ${PORT}`);
 });
