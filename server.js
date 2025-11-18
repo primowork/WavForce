@@ -1,130 +1,115 @@
 const express = require('express');
-const cors = require('cors');
 const { spawn } = require('child_process');
-const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static('.'));
+app.use(express.static('public'));
 
-app.get('/', (req, res) => {
-    res.json({ status: 'WaveForce is operational' });
-});
+app.get('/download', (req, res) => {
+  const url = req.query.url;
+  
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'healthy' });
-});
-
-app.post('/api/convert', (req, res) => {
-    const { url, filename } = req.body;
-
-    if (!url) {
-        return res.status(400).json({ error: 'URL is required' });
-    }
-
-    const randomId = crypto.randomBytes(4).toString('hex');
-    const outputName = filename ? `${filename}_${randomId}` : `waveforce_${randomId}`;
-    const tempDir = `/tmp/temp_${randomId}`;
-
-    console.log('Converting: ' + url);
-
-    if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-    }
-
-    const ytdlp = spawn('yt-dlp', [
+  const outputTemplate = `/tmp/%(title)s.%(ext)s`;
+  
+  const ytDlpArgs = [
+    '-f', 'bestaudio',
     '--extract-audio',
     '--audio-format', 'wav',
-    '--no-playlist',
-    '--output', path.join(tempDir, outputName + '.%(ext)s'),
+    '-o', outputTemplate,
     url
-]);
+  ];
 
-    let hasResponse = false;
+  const ytDlpProcess = spawn('yt-dlp', ytDlpArgs);
+  let filename = null;
+  let errorOutput = '';
 
-    const timeout = setTimeout(() => {
-        if (!hasResponse) {
-            console.log('Overall timeout');
-            ytdlp.kill();
-            cleanup();
-            res.status(504).json({ error: 'Conversion timed out (3 min limit)' });
-            hasResponse = true;
-        }
-    }, 180000); // 3 דקות כולל
+  ytDlpProcess.stderr.on('data', (data) => {
+    const output = data.toString();
+    errorOutput += output;
+    console.error('STDERR:', output);
+  });
 
-    ytdlp.stdout.on('data', (data) => {
-        console.log('STDOUT: ' + data.toString().trim());
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-        console.log('STDERR: ' + data.toString().trim());
-    });
-
-    ytdlp.on('close', (code) => {
-        clearTimeout(timeout);
-
-        if (hasResponse) return;
-
-        console.log('Process exited with code: ' + code);
-
-        if (code !== 0) {
-            cleanup();
-            res.status(400).json({ error: 'Conversion failed – check video length or availability' });
-            hasResponse = true;
-            return;
-        }
-
-        const wavFile = path.join(tempDir, outputName + '.wav');
-
-        if (fs.existsSync(wavFile)) {
-            console.log('File ready, sending...');
-
-            res.setHeader('Content-Type', 'audio/wav');
-            res.setHeader('Content-Disposition', `attachment; filename="${outputName}.wav"`);
-
-            const fileStream = fs.createReadStream(wavFile);
-            fileStream.pipe(res);
-
-            fileStream.on('end', () => {
-                cleanup();
-            });
-
-            hasResponse = true;
-        } else {
-            console.log('WAV file not found');
-            cleanup();
-            res.status(500).json({ error: 'Audio file not created – try another video' });
-            hasResponse = true;
-        }
-    });
-
-    ytdlp.on('error', (error) => {
-        clearTimeout(timeout);
-        if (!hasResponse) {
-            console.log('Process error: ' + error.message);
-            cleanup();
-            res.status(500).json({ error: 'yt-dlp failed to start' });
-            hasResponse = true;
-        }
-    });
-
-    function cleanup() {
-        try {
-            if (fs.existsSync(tempDir)) {
-                fs.rmSync(tempDir, { recursive: true, force: true });
-                console.log('Cleaned up:', tempDir);
-            }
-        } catch (e) {
-            console.log('Cleanup warning: ' + e.message);
-        }
+  ytDlpProcess.stdout.on('data', (data) => {
+    const output = data.toString();
+    console.log('STDOUT:', output);
+    
+    const match = output.match(/\[download\] Destination: (.+)/);
+    if (match) {
+      filename = match[1].trim();
     }
+  });
+
+  ytDlpProcess.on('close', (code) => {
+    if (code !== 0) {
+      console.error('yt-dlp failed with code:', code);
+      console.error('Error output:', errorOutput);
+      return res.status(500).json({ 
+        error: 'Download failed', 
+        details: errorOutput 
+      });
+    }
+
+    if (!filename || !fs.existsSync(filename)) {
+      console.error('File not found:', filename);
+      return res.status(500).json({ error: 'Could not find downloaded file' });
+    }
+
+    // Sanitize filename for Content-Disposition header
+    // Remove non-ASCII characters and special characters that might cause issues
+    const baseFilename = path.basename(filename);
+    const sanitizedFilename = baseFilename
+      .replace(/[^\x20-\x7E]/g, '_')  // Replace non-ASCII with underscore
+      .replace(/["\\]/g, '_')          // Replace quotes and backslashes
+      .replace(/[\r\n]/g, '_')         // Replace newlines
+      .replace(/[<>:"|?*]/g, '_');     // Replace other problematic characters
+
+    console.log('Original filename:', baseFilename);
+    console.log('Sanitized filename:', sanitizedFilename);
+
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Disposition', `attachment; filename="${sanitizedFilename}"`);
+    
+    const fileStream = fs.createReadStream(filename);
+    
+    fileStream.on('error', (err) => {
+      console.error('Error reading file:', err);
+      res.status(500).json({ error: 'Error reading file' });
+    });
+    
+    fileStream.pipe(res);
+    
+    fileStream.on('end', () => {
+      // Clean up the file after sending
+      fs.unlink(filename, (err) => {
+        if (err) {
+          console.error('Error deleting file:', err);
+        } else {
+          console.log('File deleted:', filename);
+        }
+      });
+    });
+
+    res.on('error', (err) => {
+      console.error('Response error:', err);
+      // Try to clean up the file even if there was an error
+      if (fs.existsSync(filename)) {
+        fs.unlink(filename, () => {});
+      }
+    });
+  });
+
+  ytDlpProcess.on('error', (err) => {
+    console.error('Failed to start yt-dlp:', err);
+    res.status(500).json({ error: 'Failed to start download process' });
+  });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log('WaveForce running on port ' + PORT);
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
