@@ -55,7 +55,9 @@ function getVideoTitle(url) {
         const args = [
             '--print', 'title',
             '--no-playlist',
-            '--extractor-args', 'youtube:player_client=android_embedded,web_embedded'
+            '--extractor-args', 'youtube:player_client=ios,web',
+            '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+            '--no-check-certificates'
         ];
         
         // Add cookies if file exists
@@ -120,8 +122,12 @@ app.post('/api/convert', async (req, res) => {
     const args = [
         '--extract-audio',
         '--audio-format', 'wav',
+        '--audio-quality', '0',
         '--no-playlist',
-        '--extractor-args', 'youtube:player_client=android_embedded,web_embedded'
+        '--extractor-args', 'youtube:player_client=ios,web',
+        '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+        '--no-check-certificates',
+        '--no-warnings'
     ];
     
     // Add cookies if file exists
@@ -137,6 +143,7 @@ app.post('/api/convert', async (req, res) => {
     const ytdlp = spawn('yt-dlp', args);
 
     let hasResponse = false;
+    let errorOutput = '';
 
     const timeout = setTimeout(() => {
         if (!hasResponse) {
@@ -153,7 +160,9 @@ app.post('/api/convert', async (req, res) => {
     });
 
     ytdlp.stderr.on('data', (data) => {
-        console.log(data.toString());
+        const output = data.toString();
+        console.log(output);
+        errorOutput += output;
     });
 
     ytdlp.on('close', (code) => {
@@ -165,7 +174,20 @@ app.post('/api/convert', async (req, res) => {
         
         if (code !== 0) {
             cleanup();
-            res.status(400).json({ error: 'Conversion failed' });
+            
+            // Provide more specific error messages
+            let errorMessage = 'Conversion failed';
+            if (errorOutput.includes('Private video') || errorOutput.includes('unavailable')) {
+                errorMessage = 'Video is private or unavailable';
+            } else if (errorOutput.includes('Sign in') || errorOutput.includes('members-only')) {
+                errorMessage = 'Video requires authentication';
+            } else if (errorOutput.includes('n challenge')) {
+                errorMessage = 'YouTube protection detected - trying alternative method';
+            } else if (errorOutput.includes('requested format')) {
+                errorMessage = 'Audio format not available for this video';
+            }
+            
+            res.status(400).json({ error: errorMessage });
             hasResponse = true;
             return;
         }
