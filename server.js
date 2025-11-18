@@ -41,7 +41,8 @@ app.get('/download', (req, res) => {
     
     const match = output.match(/\[download\] Destination: (.+)/);
     if (match) {
-      filename = match[1].trim();
+      // Clean the filename immediately when capturing it
+      filename = match[1].trim().replace(/[\r\n\t]/g, '');
     }
   });
 
@@ -60,26 +61,55 @@ app.get('/download', (req, res) => {
       return res.status(500).json({ error: 'Could not find downloaded file' });
     }
 
-    // Sanitize filename for Content-Disposition header
-    // Remove non-ASCII characters and special characters that might cause issues
+    // Get just the basename and sanitize it aggressively
     const baseFilename = path.basename(filename);
-    const sanitizedFilename = baseFilename
-      .replace(/[^\x20-\x7E]/g, '_')  // Replace non-ASCII with underscore
-      .replace(/["\\]/g, '_')          // Replace quotes and backslashes
-      .replace(/[\r\n]/g, '_')         // Replace newlines
-      .replace(/[<>:"|?*]/g, '_');     // Replace other problematic characters
+    
+    // Create a completely safe filename using Buffer encoding check
+    let sanitizedFilename;
+    try {
+      // Try to encode as ASCII to check for problematic characters
+      sanitizedFilename = baseFilename
+        .split('')
+        .map(char => {
+          const code = char.charCodeAt(0);
+          // Keep only printable ASCII characters (32-126)
+          if (code >= 32 && code <= 126 && char !== '"' && char !== '\\') {
+            return char;
+          }
+          return '_';
+        })
+        .join('');
+      
+      // If the filename is now empty or too short, use a default
+      if (sanitizedFilename.length < 3) {
+        sanitizedFilename = 'audio_' + Date.now() + '.wav';
+      }
+    } catch (err) {
+      console.error('Error sanitizing filename:', err);
+      sanitizedFilename = 'audio_' + Date.now() + '.wav';
+    }
 
     console.log('Original filename:', baseFilename);
     console.log('Sanitized filename:', sanitizedFilename);
 
-    res.setHeader('Content-Type', 'audio/wav');
-    res.setHeader('Content-Disposition', `attachment; filename="${sanitizedFilename}"`);
+    // Set headers with sanitized filename
+    try {
+      res.setHeader('Content-Type', 'audio/wav');
+      res.setHeader('Content-Disposition', `attachment; filename="${sanitizedFilename}"`);
+    } catch (headerError) {
+      console.error('Error setting headers:', headerError);
+      // Try with an even simpler filename
+      res.setHeader('Content-Type', 'audio/wav');
+      res.setHeader('Content-Disposition', `attachment; filename="audio_${Date.now()}.wav"`);
+    }
     
     const fileStream = fs.createReadStream(filename);
     
     fileStream.on('error', (err) => {
       console.error('Error reading file:', err);
-      res.status(500).json({ error: 'Error reading file' });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Error reading file' });
+      }
     });
     
     fileStream.pipe(res);
