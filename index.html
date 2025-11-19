@@ -500,6 +500,8 @@
                 <p>📊 <strong>Enhanced Limits</strong></p>
                 <p>Supporting videos up to 20 minutes and 100MB</p>
             </div>
+        </div>
+    </div>
 
     <!-- Legal Terms Modal -->
     <div id="legalModal" class="modal">
@@ -528,31 +530,24 @@
     </div>
 
     <script>
-        let termsAccepted = localStorage.getItem('waveforce_terms_accepted') === 'true';
         let conversionStartTime = 0;
         let pendingConversion = false;
         
         function initiateConversion() {
-            if (!termsAccepted) {
-                 // Show modal every time
-    document.getElementById('legalModal').style.display = 'block';
-    pendingConversion = true;
-            } else {
-                // Proceed directly to conversion
-                convertToWav();
-            }
+            document.getElementById('legalModal').style.display = 'block';
+            pendingConversion = true;
         }
 
         function acceptTermsAndConvert() {
-    document.getElementById('legalModal').style.display = 'none';
-    
-    const status = document.getElementById('status');
-    status.textContent = 'Terms accepted. Initiating conversion...';
-    status.className = 'ready';
-    
-    if (pendingConversion) {
-        pendingConversion = false;
-        convertToWav();
+            document.getElementById('legalModal').style.display = 'none';
+            
+            const status = document.getElementById('status');
+            status.textContent = 'Terms accepted. Initiating conversion...';
+            status.className = 'ready';
+            
+            if (pendingConversion) {
+                pendingConversion = false;
+                convertToWav();
             }
         }
         
@@ -694,7 +689,8 @@
             }
         }
     </script>
-        <div id="coffee-float"
+
+    <div id="coffee-float"
      style="
         position: fixed;
         right: 40px;
@@ -702,27 +698,27 @@
         z-index: 9999999;
         pointer-events: auto;
      ">
-  <a href="https://buymeacoffee.com/mr_mitsuaki" target="_blank"
-     style="
-        display: inline-block;
-        padding: 16px 26px;
-        background: rgba(255,215,0,0.12);
-        border: 1px solid #FFD700;
-        color: #FFD700;
-        font-family: 'Orbitron', sans-serif;
-        font-size: 18px;
-        border-radius: 12px;
-        text-decoration: none;
-        box-shadow: 0 0 22px rgba(255,215,0,0.85);
-        text-align: center;
-        font-weight: 700;
-        letter-spacing: 0.5px;
-        line-height: 1.4;
-        backdrop-filter: blur(4px);
-     ">
-     I'm Mr. Mitsuaki <br> ☕ Buy me a coffee
-  </a>
-</div>
+        <a href="https://buymeacoffee.com/mr_mitsuaki" target="_blank"
+         style="
+            display: inline-block;
+            padding: 16px 26px;
+            background: rgba(255,215,0,0.12);
+            border: 1px solid #FFD700;
+            color: #FFD700;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 18px;
+            border-radius: 12px;
+            text-decoration: none;
+            box-shadow: 0 0 22px rgba(255,215,0,0.85);
+            text-align: center;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            line-height: 1.4;
+            backdrop-filter: blur(4px);
+         ">
+         I'm Mr. Mitsuaki <br> ☕ Buy me a coffee
+        </a>
+    </div>
 
 </body>
 </html>
