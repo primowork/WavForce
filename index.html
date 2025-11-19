@@ -534,9 +534,9 @@
         
         function initiateConversion() {
             if (!termsAccepted) {
-                // Show modal
-                document.getElementById('legalModal').style.display = 'block';
-                pendingConversion = true;
+                 // Show modal every time
+    document.getElementById('legalModal').style.display = 'block';
+    pendingConversion = true;
             } else {
                 // Proceed directly to conversion
                 convertToWav();
