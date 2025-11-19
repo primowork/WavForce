@@ -134,6 +134,8 @@ app.post('/api/convert', async (req, res) => {
             console.log('File ready, sending...');
             
             res.setHeader('Content-Type', 'audio/wav');
+// Clean filename - remove non-ASCII characters
+const safeFilename = outputName.replace(/[^\x00-\x7F]/g, '_');
             res.setHeader('Content-Disposition', 'attachment; filename="' + outputName + '.wav"');
             
             const fileStream = fs.createReadStream(wavFile);
