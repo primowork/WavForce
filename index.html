@@ -528,15 +528,12 @@
     </div>
 
     <script>
-        let termsAccepted = localStorage.getItem('waveforce_terms_accepted') === 'true';
         let conversionStartTime = 0;
         let pendingConversion = false;
         
         function initiateConversion() {
-            if (!termsAccepted) {
-                // Show modal
-                document.getElementById('legalModal').style.display = 'block';
-                pendingConversion = true;
+    document.getElementById('legalModal').style.display = 'block';
+    pendingConversion = true;
             } else {
                 // Proceed directly to conversion
                 convertToWav();
@@ -544,8 +541,6 @@
         }
 
         function acceptTermsAndConvert() {
-            termsAccepted = true;
-            localStorage.setItem('waveforce_terms_accepted', 'true');
             document.getElementById('legalModal').style.display = 'none';
             
             const status = document.getElementById('status');
