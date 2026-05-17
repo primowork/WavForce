@@ -36,9 +36,11 @@ function getVideoTitle(url) {
         ]);
 
         let title = '';
-        ytdlp.stdout.on('data', (data) => { title += data.toString().trim(); });
+        ytdlp.stdout.setEncoding('utf8');
+        ytdlp.stdout.on('data', (data) => { title += data; });
 
         ytdlp.on('close', (code) => {
+            title = title.trim();
             if (code === 0 && title) resolve(cleanFilename(title));
             else reject(new Error('Failed to get video title'));
         });
@@ -65,7 +67,8 @@ app.post('/api/playlist-info', (req, res) => {
     let output = '';
     let errOutput = '';
 
-    ytdlp.stdout.on('data', (d) => { output += d.toString(); });
+    ytdlp.stdout.setEncoding('utf8');
+    ytdlp.stdout.on('data', (d) => { output += d; });
     ytdlp.stderr.on('data', (d) => { errOutput += d.toString(); });
 
     const timeout = setTimeout(() => {
@@ -188,8 +191,11 @@ app.post('/api/convert', async (req, res) => {
         if (fs.existsSync(wavFile)) {
             console.log('File ready, sending...');
             res.setHeader('Content-Type', 'audio/wav');
-            const safeFilename = outputName.replace(/[^\x00-\x7F]/g, '_');
-            res.setHeader('Content-Disposition', 'attachment; filename="' + safeFilename + '.wav"');
+            const asciiName = outputName.replace(/[^\x20-\x7E]/g, '_');
+            const utf8Name = encodeURIComponent(outputName + '.wav');
+            res.setHeader('Content-Disposition',
+                `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
+            res.setHeader('X-Song-Title', encodeURIComponent(outputName));
 
             const fileStream = fs.createReadStream(wavFile);
             fileStream.pipe(res);
