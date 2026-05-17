@@ -963,7 +963,9 @@
                 updateProgress(100, 'Conversion complete! Preparing transmission...');
                 const blob = await response.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
-                const finalFilename = filename ? `${filename}.wav` : 'waveforce_output.wav';
+                const headerTitle = response.headers.get('X-Song-Title');
+                const songTitle = headerTitle ? decodeURIComponent(headerTitle) : 'waveforce_output';
+                const finalFilename = filename ? `${filename}.wav` : `${songTitle}.wav`;
 
                 downloadLink.href = downloadUrl;
                 downloadLink.download = finalFilename;
@@ -1200,9 +1202,11 @@
 
             const blob = await response.blob();
             const dlUrl = window.URL.createObjectURL(blob);
+            const headerTitle = response.headers.get('X-Song-Title');
+            const name = headerTitle ? decodeURIComponent(headerTitle) : video.title;
             const a = document.createElement('a');
             a.href = dlUrl;
-            a.download = video.title + '.wav';
+            a.download = name + '.wav';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
