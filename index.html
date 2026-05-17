@@ -731,7 +731,7 @@
                 <input type="text" id="filename" placeholder="Enter custom filename">
             </div>
 
-            <button class="convert-btn" onclick="initiateConversion()">⚡ CONVERT TO WAV</button>
+            <button class="convert-btn" id="convertBtn" onclick="initiateConversion()">⚡ CONVERT TO WAV</button>
 
             <div class="progress" id="progressContainer">
                 <div class="progress-bar">
@@ -930,6 +930,9 @@
                 return;
             }
 
+            const convertBtn = document.getElementById('convertBtn');
+            convertBtn.disabled = true;
+
             conversionStartTime = Date.now();
             status.textContent = 'Conversion in progress...';
             status.className = 'converting';
@@ -992,6 +995,8 @@
 
                 status.textContent = `Error: ${errorMessage}`;
                 status.className = 'error';
+            } finally {
+                convertBtn.disabled = false;
             }
         }
 
