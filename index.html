@@ -916,6 +916,7 @@
             const filename = document.getElementById('filename').value;
             const status = document.getElementById('status');
             const downloadLink = document.getElementById('downloadLink');
+            const convertBtn = document.querySelector('.convert-btn');
 
             if (!url) {
                 status.textContent = 'Error: YouTube URL is required';
@@ -930,6 +931,7 @@
                 return;
             }
 
+            convertBtn.disabled = true;
             conversionStartTime = Date.now();
             status.textContent = 'Conversion in progress...';
             status.className = 'converting';
@@ -992,6 +994,8 @@
 
                 status.textContent = `Error: ${errorMessage}`;
                 status.className = 'error';
+            } finally {
+                convertBtn.disabled = false;
             }
         }
 
