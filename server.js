@@ -21,10 +21,18 @@ app.get('/health', (req, res) => {
 });
 
 function cleanFilename(filename) {
-    return filename
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/\s+/g, '_')
-        .substring(0, 200);
+    let cleaned = filename
+        .replace(/[<>:"/\\|?*%]/g, '_')
+        .replace(/[\x00-\x1F\x7F]/g, '')
+        .replace(/\s+/g, '_');
+
+    // Truncate by UTF-8 byte length to stay under the 255-byte filesystem
+    // limit (non-ASCII characters such as Hebrew take 2+ bytes each).
+    const MAX_BYTES = 150;
+    while (Buffer.byteLength(cleaned, 'utf8') > MAX_BYTES) {
+        cleaned = cleaned.slice(0, -1);
+    }
+    return cleaned;
 }
 
 function getVideoTitle(url) {
@@ -186,9 +194,21 @@ app.post('/api/convert', async (req, res) => {
             return;
         }
 
-        const wavFile = path.join(tempDir, outputName + '.wav');
+        // Don't predict the on-disk name: yt-dlp applies its own sanitization
+        // and length truncation, which can diverge from cleanFilename() for
+        // non-ASCII (e.g. Hebrew) titles. Pick whatever .wav was produced.
+        let wavFile = null;
+        try {
+            const produced = fs.readdirSync(tempDir)
+                .filter(f => f.toLowerCase().endsWith('.wav'));
+            if (produced.length > 0) {
+                wavFile = path.join(tempDir, produced[0]);
+            }
+        } catch (e) {
+            console.log('Could not read temp dir: ' + e.message);
+        }
 
-        if (fs.existsSync(wavFile)) {
+        if (wavFile && fs.existsSync(wavFile)) {
             console.log('File ready, sending...');
             res.setHeader('Content-Type', 'audio/wav');
             const asciiName = outputName.replace(/[^\x20-\x7E]/g, '_');
