@@ -132,15 +132,16 @@ app.post('/api/playlist-info', (req, res) => {
     });
 });
 
-app.post('/api/convert', async (req, res) => {
+async function runConversion(req, res, opts) {
     const { url } = req.body;
+    const { formatArgs, ext, mimeType, timeoutMs, defaultTitle } = opts;
 
     if (!url) return res.status(400).json({ error: 'YouTube URL is required' });
 
     const randomId = crypto.randomBytes(4).toString('hex');
     const tempDir = '/tmp/temp_' + randomId;
 
-    console.log('Converting: ' + url);
+    console.log(`Converting (${ext}): ` + url);
 
     let videoTitle;
     try {
@@ -148,7 +149,7 @@ app.post('/api/convert', async (req, res) => {
         console.log('Video title: ' + videoTitle);
     } catch (error) {
         console.log('Could not get video title, using default name');
-        videoTitle = 'waveforce_audio';
+        videoTitle = defaultTitle;
     }
 
     const outputName = videoTitle;
@@ -158,8 +159,7 @@ app.post('/api/convert', async (req, res) => {
     }
 
     const ytdlp = spawn('yt-dlp', [
-        '--extract-audio',
-        '--audio-format', 'wav',
+        ...formatArgs,
         '--no-playlist',
         '--output', path.join(tempDir, outputName + '.%(ext)s'),
         url
@@ -175,7 +175,7 @@ app.post('/api/convert', async (req, res) => {
             res.status(504).json({ error: 'Timeout - try a shorter video' });
             hasResponse = true;
         }
-    }, 90000);
+    }, timeoutMs);
 
     ytdlp.stdout.on('data', (data) => { console.log(data.toString()); });
     ytdlp.stderr.on('data', (data) => { console.log(data.toString()); });
@@ -196,28 +196,28 @@ app.post('/api/convert', async (req, res) => {
 
         // Don't predict the on-disk name: yt-dlp applies its own sanitization
         // and length truncation, which can diverge from cleanFilename() for
-        // non-ASCII (e.g. Hebrew) titles. Pick whatever .wav was produced.
-        let wavFile = null;
+        // non-ASCII (e.g. Hebrew) titles. Pick whatever file was produced.
+        let outFile = null;
         try {
             const produced = fs.readdirSync(tempDir)
-                .filter(f => f.toLowerCase().endsWith('.wav'));
+                .filter(f => f.toLowerCase().endsWith('.' + ext));
             if (produced.length > 0) {
-                wavFile = path.join(tempDir, produced[0]);
+                outFile = path.join(tempDir, produced[0]);
             }
         } catch (e) {
             console.log('Could not read temp dir: ' + e.message);
         }
 
-        if (wavFile && fs.existsSync(wavFile)) {
+        if (outFile && fs.existsSync(outFile)) {
             console.log('File ready, sending...');
-            res.setHeader('Content-Type', 'audio/wav');
+            res.setHeader('Content-Type', mimeType);
             const asciiName = outputName.replace(/[^\x20-\x7E]/g, '_');
-            const utf8Name = encodeURIComponent(outputName + '.wav');
+            const utf8Name = encodeURIComponent(outputName + '.' + ext);
             res.setHeader('Content-Disposition',
-                `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
+                `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${utf8Name}`);
             res.setHeader('X-Song-Title', encodeURIComponent(outputName));
 
-            const fileStream = fs.createReadStream(wavFile);
+            const fileStream = fs.createReadStream(outFile);
             fileStream.pipe(res);
             fileStream.on('end', () => { cleanup(); });
             hasResponse = true;
@@ -249,7 +249,26 @@ app.post('/api/convert', async (req, res) => {
             console.log('Cleanup warning: ' + e.message);
         }
     }
-});
+}
+
+app.post('/api/convert', (req, res) => runConversion(req, res, {
+    formatArgs: ['--extract-audio', '--audio-format', 'wav'],
+    ext: 'wav',
+    mimeType: 'audio/wav',
+    timeoutMs: 90000,
+    defaultTitle: 'waveforce_audio'
+}));
+
+app.post('/api/convert-mp4', (req, res) => runConversion(req, res, {
+    formatArgs: [
+        '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+        '--merge-output-format', 'mp4'
+    ],
+    ext: 'mp4',
+    mimeType: 'video/mp4',
+    timeoutMs: 300000,
+    defaultTitle: 'waveforce_video'
+}));
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log('WaveForce running on port ' + PORT);
