@@ -200,21 +200,21 @@ async function runConversion(req, res, opts) {
             return;
         }
 
-        let wavFile = path.join(tempDir, diskName + '.wav');
-        if (!fs.existsSync(wavFile)) {
+        let outFile = path.join(tempDir, diskName + '.' + ext);
+        if (!fs.existsSync(outFile)) {
             try {
-                const found = fs.readdirSync(tempDir).find(f => f.toLowerCase().endsWith('.wav'));
-                if (found) wavFile = path.join(tempDir, found);
+                const found = fs.readdirSync(tempDir).find(f => f.toLowerCase().endsWith('.' + ext));
+                if (found) outFile = path.join(tempDir, found);
             } catch (e) { /* ignore */ }
         }
 
-        if (outFile && fs.existsSync(outFile)) {
+        if (fs.existsSync(outFile)) {
             console.log('File ready, sending...');
-            res.setHeader('Content-Type', 'audio/wav');
+            res.setHeader('Content-Type', mimeType);
             const asciiName = videoTitle.replace(/[^\x20-\x7E]/g, '_');
-            const utf8Name = encodeURIComponent(videoTitle + '.wav');
+            const utf8Name = encodeURIComponent(videoTitle + '.' + ext);
             res.setHeader('Content-Disposition',
-                `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
+                `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${utf8Name}`);
             res.setHeader('X-Song-Title', encodeURIComponent(videoTitle));
 
             const fileStream = fs.createReadStream(outFile);
