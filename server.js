@@ -143,7 +143,7 @@ app.post('/api/convert', async (req, res) => {
         videoTitle = 'waveforce_audio';
     }
 
-    const outputName = videoTitle;
+    const diskName = 'audio';
 
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
@@ -153,11 +153,12 @@ app.post('/api/convert', async (req, res) => {
         '--extract-audio',
         '--audio-format', 'wav',
         '--no-playlist',
-        '--output', path.join(tempDir, outputName + '.%(ext)s'),
+        '--output', path.join(tempDir, diskName + '.%(ext)s'),
         url
     ]);
 
     let hasResponse = false;
+    let stderrTail = '';
 
     const timeout = setTimeout(() => {
         if (!hasResponse) {
@@ -169,8 +170,13 @@ app.post('/api/convert', async (req, res) => {
         }
     }, 90000);
 
-    ytdlp.stdout.on('data', (data) => { console.log(data.toString()); });
-    ytdlp.stderr.on('data', (data) => { console.log(data.toString()); });
+    ytdlp.stdout.setEncoding('utf8');
+    ytdlp.stderr.setEncoding('utf8');
+    ytdlp.stdout.on('data', (data) => { console.log(data); });
+    ytdlp.stderr.on('data', (data) => {
+        console.log(data);
+        stderrTail = (stderrTail + data).slice(-1000);
+    });
 
     ytdlp.on('close', (code) => {
         clearTimeout(timeout);
@@ -181,21 +187,27 @@ app.post('/api/convert', async (req, res) => {
 
         if (code !== 0) {
             cleanup();
-            res.status(400).json({ error: 'Conversion failed' });
+            res.status(400).json({ error: 'Conversion failed', detail: stderrTail.trim().slice(-400) });
             hasResponse = true;
             return;
         }
 
-        const wavFile = path.join(tempDir, outputName + '.wav');
+        let wavFile = path.join(tempDir, diskName + '.wav');
+        if (!fs.existsSync(wavFile)) {
+            try {
+                const found = fs.readdirSync(tempDir).find(f => f.toLowerCase().endsWith('.wav'));
+                if (found) wavFile = path.join(tempDir, found);
+            } catch (e) { /* ignore */ }
+        }
 
         if (fs.existsSync(wavFile)) {
             console.log('File ready, sending...');
             res.setHeader('Content-Type', 'audio/wav');
-            const asciiName = outputName.replace(/[^\x20-\x7E]/g, '_');
-            const utf8Name = encodeURIComponent(outputName + '.wav');
+            const asciiName = videoTitle.replace(/[^\x20-\x7E]/g, '_');
+            const utf8Name = encodeURIComponent(videoTitle + '.wav');
             res.setHeader('Content-Disposition',
                 `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
-            res.setHeader('X-Song-Title', encodeURIComponent(outputName));
+            res.setHeader('X-Song-Title', encodeURIComponent(videoTitle));
 
             const fileStream = fs.createReadStream(wavFile);
             fileStream.pipe(res);
