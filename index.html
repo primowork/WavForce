@@ -960,7 +960,10 @@
 
                 if (!response.ok) {
                     const error = await response.json();
-                    throw new Error(error.error || 'Conversion failed');
+                    const msg = error.detail
+                        ? `${error.error || 'Conversion failed'}: ${error.detail}`
+                        : (error.error || 'Conversion failed');
+                    throw new Error(msg);
                 }
 
                 updateProgress(100, 'Conversion complete! Preparing transmission...');
@@ -987,7 +990,12 @@
                 showProgress(false);
 
                 let errorMessage = err.message;
-                if (errorMessage.includes('Video too long')) errorMessage = '⏱️ Video exceeds 20-minute limit.';
+                if (/Sign in to confirm|bot/i.test(errorMessage)) errorMessage = '🤖 YouTube requires verification (bot check). Try again later.';
+                else if (/members-only/i.test(errorMessage)) errorMessage = '🔒 Members-only content.';
+                else if (/age/i.test(errorMessage)) errorMessage = '🔞 Age-restricted video.';
+                else if (/Private video/i.test(errorMessage)) errorMessage = '🚫 Private video.';
+                else if (/not available in your country/i.test(errorMessage)) errorMessage = '🌍 Geo-blocked in server region.';
+                else if (errorMessage.includes('Video too long')) errorMessage = '⏱️ Video exceeds 20-minute limit.';
                 else if (errorMessage.includes('too large')) errorMessage = '📦 File exceeds 100MB limit.';
                 else if (errorMessage.includes('unavailable')) errorMessage = '🚫 Video is unavailable, private, or restricted.';
                 else if (errorMessage.includes('timeout')) errorMessage = '⏰ Conversion timed out.';
@@ -1202,7 +1210,10 @@
 
             if (!response.ok) {
                 const err = await response.json();
-                throw new Error(err.error || 'Conversion failed');
+                const msg = err.detail
+                    ? `${err.error || 'Conversion failed'}: ${err.detail}`
+                    : (err.error || 'Conversion failed');
+                throw new Error(msg);
             }
 
             const blob = await response.blob();
