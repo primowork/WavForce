@@ -732,7 +732,7 @@
                 <input type="text" id="filename" placeholder="Enter custom filename">
             </div>
 
-            <button class="convert-btn" onclick="initiateConversion()">⚡ CONVERT TO WAV</button>
+            <button class="convert-btn" id="convertBtn" onclick="initiateConversion()">⚡ CONVERT TO WAV</button>
 
             <div class="progress" id="progressContainer">
                 <div class="progress-bar">
@@ -981,7 +981,9 @@
                 return;
             }
 
+            const convertBtn = document.getElementById('convertBtn');
             convertBtn.disabled = true;
+
             conversionStartTime = Date.now();
             status.textContent = 'Conversion in progress...';
             status.className = 'converting';
@@ -1009,7 +1011,10 @@
 
                 if (!response.ok) {
                     const error = await response.json();
-                    throw new Error(error.error || 'Conversion failed');
+                    const msg = error.detail
+                        ? `${error.error || 'Conversion failed'}: ${error.detail}`
+                        : (error.error || 'Conversion failed');
+                    throw new Error(msg);
                 }
 
                 updateProgress(100, 'Conversion complete! Preparing transmission...');
@@ -1036,104 +1041,15 @@
                 showProgress(false);
 
                 let errorMessage = err.message;
-                if (errorMessage.includes('Video too long')) errorMessage = '⏱️ Video exceeds 20-minute limit.';
+                if (/Sign in to confirm|bot/i.test(errorMessage)) errorMessage = '🤖 YouTube requires verification (bot check). Try again later.';
+                else if (/members-only/i.test(errorMessage)) errorMessage = '🔒 Members-only content.';
+                else if (/age/i.test(errorMessage)) errorMessage = '🔞 Age-restricted video.';
+                else if (/Private video/i.test(errorMessage)) errorMessage = '🚫 Private video.';
+                else if (/not available in your country/i.test(errorMessage)) errorMessage = '🌍 Geo-blocked in server region.';
+                else if (errorMessage.includes('Video too long')) errorMessage = '⏱️ Video exceeds 20-minute limit.';
                 else if (errorMessage.includes('too large')) errorMessage = '📦 File exceeds 100MB limit.';
                 else if (errorMessage.includes('unavailable')) errorMessage = '🚫 Video is unavailable, private, or restricted.';
                 else if (errorMessage.includes('timeout')) errorMessage = '⏰ Conversion timed out.';
-                else if (errorMessage.includes('authentication')) errorMessage = '🔒 Video requires sign-in.';
-
-                status.textContent = `Error: ${errorMessage}`;
-                status.className = 'error';
-            } finally {
-                convertBtn.disabled = false;
-            }
-        }
-
-        // ===== MP4 VIDEO =====
-        async function convertToMp4() {
-            const url = document.getElementById('mp4Url').value;
-            const filename = document.getElementById('mp4Filename').value;
-            const status = document.getElementById('mp4Status');
-            const downloadLink = document.getElementById('mp4DownloadLink');
-            const convertBtn = document.querySelector('#tab-mp4 .convert-btn');
-            const progressContainer = document.getElementById('mp4ProgressContainer');
-            const progressFill = document.getElementById('mp4ProgressFill');
-            const progressText = document.getElementById('mp4ProgressText');
-
-            if (!url) {
-                status.textContent = 'Error: YouTube URL is required';
-                status.className = 'error';
-                return;
-            }
-
-            const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
-            if (!youtubeRegex.test(url)) {
-                status.textContent = 'Error: Please enter a valid YouTube URL';
-                status.className = 'error';
-                return;
-            }
-
-            convertBtn.disabled = true;
-            const startTime = Date.now();
-            status.textContent = 'Downloading max-quality MP4...';
-            status.className = 'converting';
-            downloadLink.style.display = 'none';
-            progressContainer.style.display = 'block';
-            progressFill.style.width = '0%';
-
-            let progress = 0;
-            const progressInterval = setInterval(() => {
-                if (progress < 90) {
-                    progress += Math.random() * 8;
-                    progress = Math.min(progress, 90);
-                    const elapsed = Math.round((Date.now() - startTime) / 1000);
-                    progressFill.style.width = progress + '%';
-                    progressText.textContent = `Downloading... ${Math.round(progress)}% (${elapsed}s elapsed)`;
-                }
-            }, 1000);
-
-            try {
-                const response = await fetch('/api/convert-mp4', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, filename })
-                });
-
-                clearInterval(progressInterval);
-
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Download failed');
-                }
-
-                progressFill.style.width = '100%';
-                progressText.textContent = 'Download complete! Preparing transmission...';
-
-                const blob = await response.blob();
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const headerTitle = response.headers.get('X-Song-Title');
-                const songTitle = headerTitle ? decodeURIComponent(headerTitle) : 'waveforce_video';
-                const finalFilename = filename ? `${filename}.mp4` : `${songTitle}.mp4`;
-
-                downloadLink.href = downloadUrl;
-                downloadLink.download = finalFilename;
-                downloadLink.style.display = 'block';
-
-                const totalTime = Math.round((Date.now() - startTime) / 1000);
-                const fileSize = Math.round(blob.size / 1024 / 1024 * 100) / 100;
-
-                status.textContent = `✅ Transmission successful! (${totalTime}s, ${fileSize}MB)`;
-                status.className = 'success';
-                progressContainer.style.display = 'none';
-                downloadLink.click();
-
-            } catch (err) {
-                clearInterval(progressInterval);
-                progressContainer.style.display = 'none';
-
-                let errorMessage = err.message;
-                if (errorMessage.includes('Timeout')) errorMessage = '⏰ Download timed out — try a shorter video.';
-                else if (errorMessage.includes('unavailable')) errorMessage = '🚫 Video is unavailable, private, or restricted.';
                 else if (errorMessage.includes('authentication')) errorMessage = '🔒 Video requires sign-in.';
 
                 status.textContent = `Error: ${errorMessage}`;
@@ -1345,7 +1261,10 @@
 
             if (!response.ok) {
                 const err = await response.json();
-                throw new Error(err.error || 'Conversion failed');
+                const msg = err.detail
+                    ? `${err.error || 'Conversion failed'}: ${err.detail}`
+                    : (err.error || 'Conversion failed');
+                throw new Error(msg);
             }
 
             const blob = await response.blob();

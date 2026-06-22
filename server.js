@@ -152,7 +152,7 @@ async function runConversion(req, res, opts) {
         videoTitle = defaultTitle;
     }
 
-    const outputName = videoTitle;
+    const diskName = 'audio';
 
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
@@ -161,11 +161,12 @@ async function runConversion(req, res, opts) {
     const ytdlp = spawn('yt-dlp', [
         ...formatArgs,
         '--no-playlist',
-        '--output', path.join(tempDir, outputName + '.%(ext)s'),
+        '--output', path.join(tempDir, diskName + '.%(ext)s'),
         url
     ]);
 
     let hasResponse = false;
+    let stderrTail = '';
 
     const timeout = setTimeout(() => {
         if (!hasResponse) {
@@ -177,8 +178,13 @@ async function runConversion(req, res, opts) {
         }
     }, timeoutMs);
 
-    ytdlp.stdout.on('data', (data) => { console.log(data.toString()); });
-    ytdlp.stderr.on('data', (data) => { console.log(data.toString()); });
+    ytdlp.stdout.setEncoding('utf8');
+    ytdlp.stderr.setEncoding('utf8');
+    ytdlp.stdout.on('data', (data) => { console.log(data); });
+    ytdlp.stderr.on('data', (data) => {
+        console.log(data);
+        stderrTail = (stderrTail + data).slice(-1000);
+    });
 
     ytdlp.on('close', (code) => {
         clearTimeout(timeout);
@@ -189,33 +195,27 @@ async function runConversion(req, res, opts) {
 
         if (code !== 0) {
             cleanup();
-            res.status(400).json({ error: 'Conversion failed' });
+            res.status(400).json({ error: 'Conversion failed', detail: stderrTail.trim().slice(-400) });
             hasResponse = true;
             return;
         }
 
-        // Don't predict the on-disk name: yt-dlp applies its own sanitization
-        // and length truncation, which can diverge from cleanFilename() for
-        // non-ASCII (e.g. Hebrew) titles. Pick whatever file was produced.
-        let outFile = null;
-        try {
-            const produced = fs.readdirSync(tempDir)
-                .filter(f => f.toLowerCase().endsWith('.' + ext));
-            if (produced.length > 0) {
-                outFile = path.join(tempDir, produced[0]);
-            }
-        } catch (e) {
-            console.log('Could not read temp dir: ' + e.message);
+        let wavFile = path.join(tempDir, diskName + '.wav');
+        if (!fs.existsSync(wavFile)) {
+            try {
+                const found = fs.readdirSync(tempDir).find(f => f.toLowerCase().endsWith('.wav'));
+                if (found) wavFile = path.join(tempDir, found);
+            } catch (e) { /* ignore */ }
         }
 
         if (outFile && fs.existsSync(outFile)) {
             console.log('File ready, sending...');
-            res.setHeader('Content-Type', mimeType);
-            const asciiName = outputName.replace(/[^\x20-\x7E]/g, '_');
-            const utf8Name = encodeURIComponent(outputName + '.' + ext);
+            res.setHeader('Content-Type', 'audio/wav');
+            const asciiName = videoTitle.replace(/[^\x20-\x7E]/g, '_');
+            const utf8Name = encodeURIComponent(videoTitle + '.wav');
             res.setHeader('Content-Disposition',
-                `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${utf8Name}`);
-            res.setHeader('X-Song-Title', encodeURIComponent(outputName));
+                `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
+            res.setHeader('X-Song-Title', encodeURIComponent(videoTitle));
 
             const fileStream = fs.createReadStream(outFile);
             fileStream.pipe(res);
