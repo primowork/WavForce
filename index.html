@@ -1001,11 +1001,16 @@
             }, 1000);
 
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 100000);
+
                 const response = await fetch('/api/convert', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, filename })
+                    body: JSON.stringify({ url, filename }),
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
 
                 clearInterval(progressInterval);
 
@@ -1041,7 +1046,8 @@
                 showProgress(false);
 
                 let errorMessage = err.message;
-                if (/Sign in to confirm|bot/i.test(errorMessage)) errorMessage = '🤖 YouTube requires verification (bot check). Try again later.';
+                if (err.name === 'AbortError') errorMessage = '⏰ Request timed out. Try again.';
+                else if (/Sign in to confirm|bot/i.test(errorMessage)) errorMessage = '🤖 YouTube requires verification (bot check). Try again later.';
                 else if (/members-only/i.test(errorMessage)) errorMessage = '🔒 Members-only content.';
                 else if (/age/i.test(errorMessage)) errorMessage = '🔞 Age-restricted video.';
                 else if (/Private video/i.test(errorMessage)) errorMessage = '🚫 Private video.';
@@ -1253,11 +1259,20 @@
         }
 
         async function downloadVideoTrack(video, index) {
-            const response = await fetch('/api/convert', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: video.url })
-            });
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 100000);
+
+            let response;
+            try {
+                response = await fetch('/api/convert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: video.url }),
+                    signal: controller.signal
+                });
+            } finally {
+                clearTimeout(timeoutId);
+            }
 
             if (!response.ok) {
                 const err = await response.json();
