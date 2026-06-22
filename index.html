@@ -105,7 +105,7 @@
             transition: all 0.3s;
         }
 
-        .tab-btn:first-child {
+        .tab-btn:not(:last-child) {
             border-right: 1px solid rgba(255, 215, 0, 0.3);
         }
 
@@ -249,7 +249,7 @@
             font-size: 1.1rem;
         }
 
-        #status {
+        #status, #mp4Status {
             text-align: center;
             margin: 20px 0;
             font-size: 1.2rem;
@@ -257,12 +257,12 @@
             padding: 10px;
         }
 
-        #status.ready { color: #4caf50; }
-        #status.converting { color: #ffeb3b; }
-        #status.error { color: #ff4444; }
-        #status.success { color: #00ff88; }
+        #status.ready, #mp4Status.ready { color: #4caf50; }
+        #status.converting, #mp4Status.converting { color: #ffeb3b; }
+        #status.error, #mp4Status.error { color: #ff4444; }
+        #status.success, #mp4Status.success { color: #00ff88; }
 
-        #downloadLink {
+        #downloadLink, #mp4DownloadLink {
             display: none;
             text-align: center;
             margin: 30px 0;
@@ -279,7 +279,7 @@
             transition: all 0.3s;
         }
 
-        #downloadLink:hover {
+        #downloadLink:hover, #mp4DownloadLink:hover {
             background: rgba(255, 215, 0, 0.2);
             transform: scale(1.05);
             box-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
@@ -709,6 +709,7 @@
         <div class="tab-nav">
             <button class="tab-btn active" onclick="switchTab('single')">⚡ Single Video</button>
             <button class="tab-btn" onclick="switchTab('playlist')">📋 Playlist</button>
+            <button class="tab-btn" onclick="switchTab('mp4')">🎬 MP4 Video</button>
         </div>
 
         <!-- SINGLE VIDEO TAB -->
@@ -819,6 +820,39 @@
             </div>
         </div>
 
+        <!-- MP4 VIDEO TAB -->
+        <div id="tab-mp4" class="tab-panel">
+            <div class="limits">
+                <h3>🎬 YouTube → MP4 (Max Quality)</h3>
+                <p><strong>📺 Resolution:</strong> Best available (up to 4K when offered by YouTube)</p>
+                <p><strong>🔊 Audio:</strong> Best available audio track, merged into MP4</p>
+                <p><strong>⏱️ Conversion Timeout:</strong> 5 minutes</p>
+                <p><strong>📦 Note:</strong> Higher resolutions produce larger files</p>
+            </div>
+
+            <div class="input-group">
+                <label>🎬 YOUTUBE URL</label>
+                <input type="text" id="mp4Url" placeholder="Enter YouTube URL">
+            </div>
+
+            <div class="input-group">
+                <label>📝 CUSTOM FILENAME (Optional)</label>
+                <input type="text" id="mp4Filename" placeholder="Enter custom filename">
+            </div>
+
+            <button class="convert-btn" onclick="initiateMp4Conversion()">🎬 DOWNLOAD MP4</button>
+
+            <div class="progress" id="mp4ProgressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="mp4ProgressFill" style="width: 0%;"></div>
+                </div>
+                <p id="mp4ProgressText">Initiating download...</p>
+            </div>
+
+            <p id="mp4Status" class="ready">Ready for transmission</p>
+            <a id="mp4DownloadLink">📥 DOWNLOAD MP4 TRANSMISSION</a>
+        </div>
+
     </div>
 
     <!-- Legal Terms Modal -->
@@ -865,12 +899,21 @@
         // ===== SINGLE VIDEO =====
         let conversionStartTime = 0;
         let pendingConversion = false;
+        let pendingMp4Conversion = false;
         let pendingPlaylistDownload = null;
 
         function initiateConversion() {
             pendingPlaylistDownload = null;
+            pendingMp4Conversion = false;
             document.getElementById('legalModal').style.display = 'block';
             pendingConversion = true;
+        }
+
+        function initiateMp4Conversion() {
+            pendingPlaylistDownload = null;
+            pendingConversion = false;
+            document.getElementById('legalModal').style.display = 'block';
+            pendingMp4Conversion = true;
         }
 
         function acceptTermsAndConvert() {
@@ -883,6 +926,12 @@
                 return;
             }
 
+            if (pendingMp4Conversion) {
+                pendingMp4Conversion = false;
+                convertToMp4();
+                return;
+            }
+
             if (pendingConversion) {
                 pendingConversion = false;
                 convertToWav();
@@ -892,6 +941,7 @@
         function declineTerms() {
             document.getElementById('legalModal').style.display = 'none';
             pendingConversion = false;
+            pendingMp4Conversion = false;
             pendingPlaylistDownload = null;
             const status = document.getElementById('status');
             status.textContent = 'You must agree to the terms to use WaveForce';
@@ -916,6 +966,7 @@
             const filename = document.getElementById('filename').value;
             const status = document.getElementById('status');
             const downloadLink = document.getElementById('downloadLink');
+            const convertBtn = document.querySelector('.convert-btn');
 
             if (!url) {
                 status.textContent = 'Error: YouTube URL is required';
@@ -1236,6 +1287,10 @@
 
         document.getElementById('playlistUrl').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') fetchPlaylist();
+        });
+
+        document.getElementById('mp4Url').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') initiateMp4Conversion();
         });
 
         window.onload = function() {

@@ -21,10 +21,18 @@ app.get('/health', (req, res) => {
 });
 
 function cleanFilename(filename) {
-    return filename
-        .replace(/[<>:"/\\|?*]/g, '_')
-        .replace(/\s+/g, '_')
-        .substring(0, 200);
+    let cleaned = filename
+        .replace(/[<>:"/\\|?*%]/g, '_')
+        .replace(/[\x00-\x1F\x7F]/g, '')
+        .replace(/\s+/g, '_');
+
+    // Truncate by UTF-8 byte length to stay under the 255-byte filesystem
+    // limit (non-ASCII characters such as Hebrew take 2+ bytes each).
+    const MAX_BYTES = 150;
+    while (Buffer.byteLength(cleaned, 'utf8') > MAX_BYTES) {
+        cleaned = cleaned.slice(0, -1);
+    }
+    return cleaned;
 }
 
 function getVideoTitle(url) {
@@ -124,15 +132,16 @@ app.post('/api/playlist-info', (req, res) => {
     });
 });
 
-app.post('/api/convert', async (req, res) => {
+async function runConversion(req, res, opts) {
     const { url } = req.body;
+    const { formatArgs, ext, mimeType, timeoutMs, defaultTitle } = opts;
 
     if (!url) return res.status(400).json({ error: 'YouTube URL is required' });
 
     const randomId = crypto.randomBytes(4).toString('hex');
     const tempDir = '/tmp/temp_' + randomId;
 
-    console.log('Converting: ' + url);
+    console.log(`Converting (${ext}): ` + url);
 
     let videoTitle;
     try {
@@ -140,7 +149,7 @@ app.post('/api/convert', async (req, res) => {
         console.log('Video title: ' + videoTitle);
     } catch (error) {
         console.log('Could not get video title, using default name');
-        videoTitle = 'waveforce_audio';
+        videoTitle = defaultTitle;
     }
 
     const diskName = 'audio';
@@ -150,8 +159,7 @@ app.post('/api/convert', async (req, res) => {
     }
 
     const ytdlp = spawn('yt-dlp', [
-        '--extract-audio',
-        '--audio-format', 'wav',
+        ...formatArgs,
         '--no-playlist',
         '--output', path.join(tempDir, diskName + '.%(ext)s'),
         url
@@ -168,7 +176,7 @@ app.post('/api/convert', async (req, res) => {
             res.status(504).json({ error: 'Timeout - try a shorter video' });
             hasResponse = true;
         }
-    }, 90000);
+    }, timeoutMs);
 
     ytdlp.stdout.setEncoding('utf8');
     ytdlp.stderr.setEncoding('utf8');
@@ -200,7 +208,7 @@ app.post('/api/convert', async (req, res) => {
             } catch (e) { /* ignore */ }
         }
 
-        if (fs.existsSync(wavFile)) {
+        if (outFile && fs.existsSync(outFile)) {
             console.log('File ready, sending...');
             res.setHeader('Content-Type', 'audio/wav');
             const asciiName = videoTitle.replace(/[^\x20-\x7E]/g, '_');
@@ -209,7 +217,7 @@ app.post('/api/convert', async (req, res) => {
                 `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
             res.setHeader('X-Song-Title', encodeURIComponent(videoTitle));
 
-            const fileStream = fs.createReadStream(wavFile);
+            const fileStream = fs.createReadStream(outFile);
             fileStream.pipe(res);
             fileStream.on('end', () => { cleanup(); });
             hasResponse = true;
@@ -241,7 +249,26 @@ app.post('/api/convert', async (req, res) => {
             console.log('Cleanup warning: ' + e.message);
         }
     }
-});
+}
+
+app.post('/api/convert', (req, res) => runConversion(req, res, {
+    formatArgs: ['--extract-audio', '--audio-format', 'wav'],
+    ext: 'wav',
+    mimeType: 'audio/wav',
+    timeoutMs: 90000,
+    defaultTitle: 'waveforce_audio'
+}));
+
+app.post('/api/convert-mp4', (req, res) => runConversion(req, res, {
+    formatArgs: [
+        '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+        '--merge-output-format', 'mp4'
+    ],
+    ext: 'mp4',
+    mimeType: 'video/mp4',
+    timeoutMs: 300000,
+    defaultTitle: 'waveforce_video'
+}));
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log('WaveForce running on port ' + PORT);
