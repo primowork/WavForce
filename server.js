@@ -208,7 +208,7 @@ async function runConversion(req, res, opts) {
             } catch (e) { /* ignore */ }
         }
 
-        if (outFile && fs.existsSync(outFile)) {
+        if (wavFile && fs.existsSync(wavFile)) {
             console.log('File ready, sending...');
             res.setHeader('Content-Type', 'audio/wav');
             const asciiName = videoTitle.replace(/[^\x20-\x7E]/g, '_');
@@ -217,7 +217,7 @@ async function runConversion(req, res, opts) {
                 `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
             res.setHeader('X-Song-Title', encodeURIComponent(videoTitle));
 
-            const fileStream = fs.createReadStream(outFile);
+            const fileStream = fs.createReadStream(wavFile);
             fileStream.pipe(res);
             fileStream.on('end', () => { cleanup(); });
             hasResponse = true;
