@@ -1047,7 +1047,7 @@
 
                 let errorMessage = err.message;
                 if (err.name === 'AbortError') errorMessage = '⏰ Conversion timed out (client).';
-                else if (/Sign in to confirm|bot/i.test(errorMessage)) errorMessage = '🤖 YouTube requires verification (bot check). Try again later.';
+                else if (/Sign in to confirm|not a bot|rate limited|refused the download from this server/i.test(errorMessage)) errorMessage = '🚫 YouTube is blocking this server (bot check). Retrying will not help - the server needs YouTube cookies or a proxy configured.';
                 else if (/members-only/i.test(errorMessage)) errorMessage = '🔒 Members-only content.';
                 else if (/age/i.test(errorMessage)) errorMessage = '🔞 Age-restricted video.';
                 else if (/Private video/i.test(errorMessage)) errorMessage = '🚫 Private video.';
