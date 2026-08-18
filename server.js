@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -20,6 +20,42 @@ app.get('/health', (req, res) => {
     res.json({ status: 'healthy' });
 });
 
+// yt-dlp needs a JavaScript runtime to solve YouTube's player challenges.
+// Without one, extraction fails with "HTTP Error 403: Forbidden" or silently
+// drops formats. Deno is the runtime yt-dlp enables by default; anything else
+// has to be passed explicitly with --js-runtimes.
+function detectJsRuntime() {
+    if (process.env.YTDLP_JS_RUNTIME) return process.env.YTDLP_JS_RUNTIME;
+
+    for (const runtime of ['deno', 'node', 'bun']) {
+        const found = spawnSync('which', [runtime], { encoding: 'utf8' });
+        if (found.status === 0 && found.stdout.trim()) {
+            return runtime + ':' + found.stdout.trim();
+        }
+    }
+    return null;
+}
+
+const JS_RUNTIME = detectJsRuntime();
+
+if (JS_RUNTIME) {
+    console.log('yt-dlp JavaScript runtime: ' + JS_RUNTIME);
+} else {
+    console.warn('No JavaScript runtime found (deno/node/bun). YouTube extraction will likely fail with 403 errors.');
+}
+
+// Arguments shared by every yt-dlp invocation.
+function baseArgs() {
+    const args = [];
+    if (JS_RUNTIME) args.push('--js-runtimes', JS_RUNTIME);
+    args.push('--retries', '3', '--extractor-retries', '3');
+    return args;
+}
+
+function spawnYtdlp(args) {
+    return spawn('yt-dlp', [...baseArgs(), ...args]);
+}
+
 function cleanFilename(filename) {
     let cleaned = filename
         .replace(/[<>:"/\\|?*%]/g, '_')
@@ -37,7 +73,7 @@ function cleanFilename(filename) {
 
 function getVideoTitle(url) {
     return new Promise((resolve, reject) => {
-        const ytdlp = spawn('yt-dlp', [
+        const ytdlp = spawnYtdlp([
             '--print', 'title',
             '--no-playlist',
             url
@@ -65,7 +101,7 @@ app.post('/api/playlist-info', (req, res) => {
 
     console.log('Fetching playlist info: ' + url);
 
-    const ytdlp = spawn('yt-dlp', [
+    const ytdlp = spawnYtdlp([
         '--flat-playlist',
         '--print', '%(title)s|||%(id)s|||%(duration)s',
         '--no-warnings',
@@ -158,7 +194,7 @@ async function runConversion(req, res, opts) {
         fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    const ytdlp = spawn('yt-dlp', [
+    const ytdlp = spawnYtdlp([
         ...formatArgs,
         '--no-playlist',
         '--output', path.join(tempDir, diskName + '.%(ext)s'),
