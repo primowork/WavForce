@@ -1,4 +1,4 @@
-yt-dlp>=2024.12.13
-   ffmpeg-python
-   flask
-   flask-cors
+yt-dlp>=2025.11.12
+ffmpeg-python
+flask
+flask-cors
