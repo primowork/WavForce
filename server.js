@@ -44,16 +44,103 @@ if (JS_RUNTIME) {
     console.warn('No JavaScript runtime found (deno/node/bun). YouTube extraction will likely fail with 403 errors.');
 }
 
+// YouTube blocks datacenter IPs (Railway, most cloud hosts) far more
+// aggressively than home connections. Cookies exported from a signed-in
+// browser session are the single most effective workaround; set either
+// YTDLP_COOKIES_FILE (path inside the container) or YTDLP_COOKIES_B64
+// (base64 of a Netscape-format cookies.txt) to enable them.
+function resolveCookieFile() {
+    if (process.env.YTDLP_COOKIES_FILE) {
+        if (fs.existsSync(process.env.YTDLP_COOKIES_FILE)) {
+            return process.env.YTDLP_COOKIES_FILE;
+        }
+        console.warn('YTDLP_COOKIES_FILE is set but the file does not exist: ' + process.env.YTDLP_COOKIES_FILE);
+        return null;
+    }
+
+    if (process.env.YTDLP_COOKIES_B64) {
+        try {
+            const target = '/tmp/yt-dlp-cookies.txt';
+            fs.writeFileSync(target, Buffer.from(process.env.YTDLP_COOKIES_B64, 'base64'), { mode: 0o600 });
+            return target;
+        } catch (e) {
+            console.warn('Could not write cookies from YTDLP_COOKIES_B64: ' + e.message);
+        }
+    }
+
+    return null;
+}
+
+const COOKIE_FILE = resolveCookieFile();
+const PROXY = process.env.YTDLP_PROXY || null;
+
+if (COOKIE_FILE) console.log('Using yt-dlp cookies from ' + COOKIE_FILE);
+if (PROXY) console.log('Using yt-dlp proxy');
+
 // Arguments shared by every yt-dlp invocation.
 function baseArgs() {
     const args = [];
     if (JS_RUNTIME) args.push('--js-runtimes', JS_RUNTIME);
+    if (COOKIE_FILE) args.push('--cookies', COOKIE_FILE);
+    if (PROXY) args.push('--proxy', PROXY);
     args.push('--retries', '3', '--extractor-retries', '3');
     return args;
 }
 
 function spawnYtdlp(args) {
     return spawn('yt-dlp', [...baseArgs(), ...args]);
+}
+
+// YouTube serves different player clients different format URLs, and which
+// clients survive a datacenter IP changes over time. When a download is
+// refused we walk this ladder rather than giving up on the first 403.
+const CLIENT_PROFILES = [
+    { name: 'default', args: [] },
+    { name: 'tv', args: ['--extractor-args', 'youtube:player_client=tv,default'] },
+    { name: 'web_safari', args: ['--extractor-args', 'youtube:player_client=web_safari,mweb'] },
+    { name: 'android_vr', args: ['--extractor-args', 'youtube:player_client=android_vr,tv_embedded'] }
+];
+
+// Failures worth retrying with a different player client. Anything else
+// (private video, removed video, bad URL) fails the same way every time.
+const RETRYABLE = /403|Forbidden|Requested format is not available|Sign in to confirm|unable to download video data|nsig|player response|precondition check failed/i;
+
+function runYtdlp(args, timeoutMs) {
+    return new Promise((resolve) => {
+        const child = spawnYtdlp(args);
+
+        let stderrTail = '';
+        let settled = false;
+        let timedOut = false;
+
+        const timer = setTimeout(() => {
+            timedOut = true;
+            child.kill('SIGKILL');
+        }, Math.max(timeoutMs, 1000));
+
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', (data) => { console.log(data); });
+        child.stderr.on('data', (data) => {
+            console.log(data);
+            stderrTail = (stderrTail + data).slice(-2000);
+        });
+
+        const finish = (result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(result);
+        };
+
+        child.on('error', (error) => {
+            finish({ ok: false, spawnError: error, timedOut, stderrTail });
+        });
+
+        child.on('close', (code) => {
+            finish({ ok: code === 0 && !timedOut, code, timedOut, stderrTail });
+        });
+    });
 }
 
 function cleanFilename(filename) {
@@ -170,7 +257,7 @@ app.post('/api/playlist-info', (req, res) => {
 
 async function runConversion(req, res, opts) {
     const { url } = req.body;
-    const { formatArgs, ext, mimeType, timeoutMs, defaultTitle } = opts;
+    const { formatArgs, ext, timeoutMs, defaultTitle } = opts;
 
     if (!url) return res.status(400).json({ error: 'YouTube URL is required' });
 
@@ -190,91 +277,6 @@ async function runConversion(req, res, opts) {
 
     const diskName = 'audio';
 
-    if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-    }
-
-    const ytdlp = spawnYtdlp([
-        ...formatArgs,
-        '--no-playlist',
-        '--output', path.join(tempDir, diskName + '.%(ext)s'),
-        url
-    ]);
-
-    let hasResponse = false;
-    let stderrTail = '';
-
-    const timeout = setTimeout(() => {
-        if (!hasResponse) {
-            console.log('Timeout');
-            ytdlp.kill();
-            cleanup();
-            res.status(504).json({ error: 'Timeout - try a shorter video' });
-            hasResponse = true;
-        }
-    }, timeoutMs);
-
-    ytdlp.stdout.setEncoding('utf8');
-    ytdlp.stderr.setEncoding('utf8');
-    ytdlp.stdout.on('data', (data) => { console.log(data); });
-    ytdlp.stderr.on('data', (data) => {
-        console.log(data);
-        stderrTail = (stderrTail + data).slice(-1000);
-    });
-
-    ytdlp.on('close', (code) => {
-        clearTimeout(timeout);
-
-        if (hasResponse) return;
-
-        console.log('Process exited with code: ' + code);
-
-        if (code !== 0) {
-            cleanup();
-            res.status(400).json({ error: 'Conversion failed', detail: stderrTail.trim().slice(-400) });
-            hasResponse = true;
-            return;
-        }
-
-        let wavFile = path.join(tempDir, diskName + '.wav');
-        if (!fs.existsSync(wavFile)) {
-            try {
-                const found = fs.readdirSync(tempDir).find(f => f.toLowerCase().endsWith('.wav'));
-                if (found) wavFile = path.join(tempDir, found);
-            } catch (e) { /* ignore */ }
-        }
-
-        if (wavFile && fs.existsSync(wavFile)) {
-            console.log('File ready, sending...');
-            res.setHeader('Content-Type', 'audio/wav');
-            const asciiName = videoTitle.replace(/[^\x20-\x7E]/g, '_');
-            const utf8Name = encodeURIComponent(videoTitle + '.wav');
-            res.setHeader('Content-Disposition',
-                `attachment; filename="${asciiName}.wav"; filename*=UTF-8''${utf8Name}`);
-            res.setHeader('X-Song-Title', encodeURIComponent(videoTitle));
-
-            const fileStream = fs.createReadStream(wavFile);
-            fileStream.pipe(res);
-            fileStream.on('end', () => { cleanup(); });
-            hasResponse = true;
-        } else {
-            console.log('File not found');
-            cleanup();
-            res.status(500).json({ error: 'File not created' });
-            hasResponse = true;
-        }
-    });
-
-    ytdlp.on('error', (error) => {
-        clearTimeout(timeout);
-        if (!hasResponse) {
-            console.log('Process error: ' + error);
-            cleanup();
-            res.status(500).json({ error: 'Process failed' });
-            hasResponse = true;
-        }
-    });
-
     function cleanup() {
         try {
             if (fs.existsSync(tempDir)) {
@@ -285,6 +287,102 @@ async function runConversion(req, res, opts) {
             console.log('Cleanup warning: ' + e.message);
         }
     }
+
+    // The whole request shares one time budget, split across attempts.
+    const deadline = Date.now() + timeoutMs;
+    let result = null;
+    const tried = [];
+
+    for (const profile of CLIENT_PROFILES) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+            if (result) result.timedOut = true;
+            break;
+        }
+
+        cleanup();
+        fs.mkdirSync(tempDir, { recursive: true });
+
+        console.log(`Attempt with player client profile: ${profile.name}`);
+        tried.push(profile.name);
+
+        result = await runYtdlp([
+            ...profile.args,
+            ...formatArgs,
+            '--no-playlist',
+            '--output', path.join(tempDir, diskName + '.%(ext)s'),
+            url
+        ], remaining);
+
+        if (result.ok) break;
+
+        if (result.spawnError) {
+            console.log('Process error: ' + result.spawnError.message);
+            break;
+        }
+
+        if (result.timedOut) {
+            console.log('Timeout');
+            break;
+        }
+
+        if (!RETRYABLE.test(result.stderrTail)) {
+            console.log('Failure is not retryable, giving up');
+            break;
+        }
+
+        console.log(`Profile ${profile.name} was refused, trying the next player client`);
+    }
+
+    if (!result || result.spawnError) {
+        cleanup();
+        return res.status(500).json({ error: 'Process failed' });
+    }
+
+    if (result.timedOut) {
+        cleanup();
+        return res.status(504).json({ error: 'Timeout - try a shorter video' });
+    }
+
+    if (!result.ok) {
+        cleanup();
+        const detail = result.stderrTail.trim().slice(-400);
+        const blocked = /403|Forbidden|Sign in to confirm/i.test(result.stderrTail);
+        return res.status(400).json({
+            error: blocked
+                ? 'YouTube refused the download from this server. This usually means the server IP is rate limited - configuring YTDLP_COOKIES_B64 or YTDLP_PROXY normally fixes it.'
+                : 'Conversion failed',
+            detail,
+            triedClients: tried
+        });
+    }
+
+    let outFile = path.join(tempDir, diskName + '.' + ext);
+    if (!fs.existsSync(outFile)) {
+        try {
+            const found = fs.readdirSync(tempDir).find(f => f.toLowerCase().endsWith('.' + ext));
+            if (found) outFile = path.join(tempDir, found);
+        } catch (e) { /* ignore */ }
+    }
+
+    if (!fs.existsSync(outFile)) {
+        console.log('File not found');
+        cleanup();
+        return res.status(500).json({ error: 'File not created' });
+    }
+
+    console.log('File ready, sending...');
+    res.setHeader('Content-Type', opts.mimeType);
+    const asciiName = videoTitle.replace(/[^\x20-\x7E]/g, '_');
+    const utf8Name = encodeURIComponent(videoTitle + '.' + ext);
+    res.setHeader('Content-Disposition',
+        `attachment; filename="${asciiName}.${ext}"; filename*=UTF-8''${utf8Name}`);
+    res.setHeader('X-Song-Title', encodeURIComponent(videoTitle));
+
+    const fileStream = fs.createReadStream(outFile);
+    fileStream.pipe(res);
+    fileStream.on('close', () => { cleanup(); });
+    fileStream.on('error', () => { cleanup(); });
 }
 
 app.post('/api/convert', (req, res) => runConversion(req, res, {
