@@ -12,6 +12,31 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
+// Simple bearer-token auth so WaveForce can be deployed on a public domain
+// while remaining accessible only to authorized users. The token can be
+// supplied via the Authorization header ("Bearer <token>") or a ?token=
+// query parameter. "/" and "/health" stay public for status checks.
+function requireAuth(req, res, next) {
+    if (req.path === '/' || req.path === '/health') return next();
+
+    const authHeader = req.headers.authorization || '';
+    let token = null;
+
+    if (authHeader.startsWith('Bearer ')) {
+        token = authHeader.slice('Bearer '.length).trim();
+    } else if (req.query.token) {
+        token = req.query.token;
+    }
+
+    if (!token || token !== process.env.AUTH_TOKEN) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    next();
+}
+
+app.use(requireAuth);
+
 app.get('/', (req, res) => {
     res.json({ status: 'WaveForce is operational' });
 });
